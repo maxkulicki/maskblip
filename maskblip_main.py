@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import matplotlib.patches as mpatches
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import AffinityPropagation
 
 def merge_clusters(clusters, embs, threshold=0.995):
     cluster_sizes = []
@@ -65,7 +66,7 @@ image_emb = model.forward_encoder({"image": image})
 grid_image_emb = image_emb[:, :-1, :].unflatten(1, (24,24)).squeeze().detach().cpu().numpy()
 slic_clusters = slic(grid_image_emb, n_segments=10, compactness=0.001, sigma=1, channel_axis=2, enforce_connectivity=False)
 #dbscan_clusters = DBSCAN(eps=10, min_samples=40).fit_predict(image_emb[:, :-1, :].squeeze().detach().numpy()).reshape(24, 24)
-#chameleon_clusters = cluster(image_emb[:, :-1, :].squeeze().detach().numpy(), 10).reshape(24, 24)
+affinity_clusters = AffinityPropagation().fit_predict(image_emb[:, :-1, :].squeeze().detach().numpy()).reshape(24, 24)
 dataset = image_emb[:, :-1, :].squeeze().detach().numpy()
 clusters = slic_clusters
 
@@ -88,7 +89,9 @@ cluster_embs = []
 for i in range(len(cluster_indices)):
     cluster_embs.append(image_emb[:, :-1, :].squeeze().detach().cpu().numpy()[cluster_indices[i]])
 
-prompt = [model.prompt] #* image_embeds.size(0)
+prompt = [model.prompt]
+# prompt_text = "A one-word summary of this image: "
+# prompt = [prompt_text]
 prompt = model.tokenizer(prompt, return_tensors="pt").to(device)
 prompt.input_ids[:, 0] = model.tokenizer.bos_token_id
 prompt.input_ids = prompt.input_ids[:, :-1]
@@ -128,6 +131,7 @@ matches = torch.argmax(sims, dim=0)[:-1].unflatten(0, (24,24)).detach().cpu().nu
 
 fig, axs = plt.subplots(3,1,figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 1]})
 implot = axs[0].imshow(raw_image)
+
 #axs[0].set_title(full_caption)
 cluster_plot = axs[1].imshow(clusters)
 values = np.unique(clusters.ravel())
@@ -136,7 +140,6 @@ colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
 patches = [ mpatches.Patch(color=colors[i], label=captions[i] ) for i in range(len(values)) ]
 # put those patched as legend-handles into the legend
 segment_plot = axs[2].imshow(matches)
-
 plt.legend(handles=patches, loc=8, bbox_to_anchor=(0.5, -0.35))
 
 #plt.tight_layout()
