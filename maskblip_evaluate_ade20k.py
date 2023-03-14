@@ -214,7 +214,7 @@ full_image_precisions = []
 n_samples = 64
 
 ade20k_dir = "datasets/original_ade20k/"
-thresholds = [0.99, 0.995, 0.997, 0.999]
+thresholds = [0.995, 0.997, 0.999, 0.9995]
 segment_numbers = [5, 10, 15, 20]
 clustering_methods = [(x, y) for x in thresholds for y in segment_numbers]
 
@@ -254,7 +254,7 @@ ax.set_xticklabels(thresholds)
 ax.set_yticklabels(segment_numbers)
 ax.set_xlabel('Threshold')
 ax.set_ylabel('Number of segments')
-for (i, j), z in np.ndenumerate(recalls):
+for (i, j), z in np.ndenumerate(precisions):
     ax.text(j, i, '{:0.3f}'.format(z), ha='center', va='center',
             bbox=dict(boxstyle='round', facecolor='white', edgecolor='0.3'))
 plt.show()
