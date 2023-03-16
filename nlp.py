@@ -8,7 +8,7 @@ def filter_substrings(noun_chunks):
             if i != j and chunk in other_chunk.split():
                 is_substring = True
                 break
-        if not is_substring and not chunk in ['a', 'an', 'the', 'background']:
+        if not is_substring and not chunk in ['a', 'an', 'the', "the a"]:
             filtered_chunks.append(chunk)
     return filtered_chunks
 
@@ -43,6 +43,10 @@ def get_noun_chunks(captions, spacy_model):
         chunks = remove_articles(chunks)
         all_chunks += chunks
     all_chunks = filter_substrings(all_chunks)
-
     return all_chunks
 
+if __name__ == "__main__":
+    spacy_model = load_spacy()
+    captions = ['a giraffe', 'zebras', 'ostriches', 'a person standing in front of a white wall', 'water water water']
+    chunks = get_noun_chunks(captions, spacy_model)
+    print(chunks)

@@ -53,8 +53,6 @@ def merge_clusters(clusters, embs, threshold=0.995):
 
 def refine_clusters(blip_clusters, image, n_segments=25, compactness=10, sigma=1):
     image_slic = np.asarray(slic(image, n_segments=n_segments, compactness=compactness, sigma=sigma))
-    plt.imshow(image_slic)
-    plt.show()
     new_clusters = np.zeros_like(image_slic)
     shape = (image_slic.shape[1], image_slic.shape[0])
     clustered_img = np.asarray(Image.fromarray(blip_clusters.squeeze().astype(np.uint8)).resize(shape, Image.NEAREST))
@@ -80,7 +78,7 @@ image_emb = model.forward_encoder({"image": image})
 
 grid_image_emb = image_emb[:, :-1, :].unflatten(1, (24,24)).squeeze().detach().cpu().numpy()
 slic_clusters = slic(grid_image_emb, n_segments=10, compactness=0.001, sigma=1, channel_axis=2, enforce_connectivity=False)
-affinity_clusters = AffinityPropagation().fit_predict(image_emb[:, :-1, :].squeeze().detach().numpy()).reshape(24, 24)
+#affinity_clusters = AffinityPropagation().fit_predict(image_emb[:, :-1, :].squeeze().detach().numpy()).reshape(24, 24)
 dataset = image_emb[:, :-1, :].squeeze().detach().numpy()
 clusters = slic_clusters
 
@@ -138,34 +136,38 @@ plt.tight_layout()
 plt.show()
 
 
-#del model
-# model, vis_processors, txt_processors = load_model_and_preprocess(name="blip_feature_extractor", model_type="base", is_eval=True, device=device)
-#
-# caption_embeddings = []
-# for caption in captions:
-#     sample = {"image": image, "text_input": [caption]}
-#     cap_emb = model.extract_features(sample, mode="text").text_embeds
-#     caption_embeddings.append(cap_emb[:,0,:]) # classification token only
-# caption_embeddings = torch.stack(caption_embeddings).squeeze()
-# sims = caption_embeddings @ image_emb.squeeze().t()
-# matches = torch.argmax(sims, dim=0)[:-1].unflatten(0, (24,24)).detach().cpu().numpy()
-#
-#
-# fig, axs = plt.subplots(3,1,figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 1]})
-# implot = axs[0].imshow(raw_image)
-#
-# #axs[0].set_title(full_caption)
-# cluster_plot = axs[1].imshow(clusters)
-# values = np.unique(clusters.ravel())
-# colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
-# # create a patch (proxy artist) for every color
-# patches = [ mpatches.Patch(color=colors[i], label=captions[i] ) for i in range(len(values)) ]
-# # put those patched as legend-handles into the legend
-# segment_plot = axs[2].imshow(matches)
-# plt.legend(handles=patches, loc=8, bbox_to_anchor=(0.5, -0.35))
-#
-# #plt.tight_layout()
-# plt.show()
+del model
+model, vis_processors, txt_processors = load_model_and_preprocess(name="blip_feature_extractor", model_type="base", is_eval=True, device=device)
+#captions = chunks
+
+caption_embeddings = []
+for caption in captions:
+    sample = {"image": image, "text_input": ["A picture of a " + caption]}
+    cap_emb = model.extract_features(sample, mode="text").text_embeds
+    caption_embeddings.append(cap_emb.mean(dim=1))
+    #caption_embeddings.append(cap_emb[:,0,:]) # classification token only
+caption_embeddings = torch.stack(caption_embeddings).squeeze()
+
+caption_embeddings = caption_embeddings / caption_embeddings.norm(dim=1, keepdim=True)
+sims = caption_embeddings @ image_emb.squeeze().t()
+matches = torch.argmax(sims, dim=0)[:-1].unflatten(0, (24,24)).detach().cpu().numpy()
+
+
+fig, axs = plt.subplots(3,1,figsize=(9, 14), gridspec_kw={'height_ratios': [1, 1, 1]})
+implot = axs[0].imshow(raw_image)
+
+#axs[0].set_title(full_caption)
+cluster_plot = axs[1].imshow(clusters)
+values = np.unique(matches.ravel())+1
+colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
+# create a patch (proxy artist) for every color
+patches = [ mpatches.Patch(color=colors[i], label=captions[i] ) for i in range(len(values)) ]
+# put those patched as legend-handles into the legend
+segment_plot = axs[2].imshow(matches)
+plt.legend(handles=patches, loc=8, bbox_to_anchor=(0.5, -0.35))
+
+#plt.tight_layout()
+plt.show()
 
 
 
