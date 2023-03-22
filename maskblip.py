@@ -1,5 +1,4 @@
 import torch
-from lavis.models import load_model_and_preprocess
 from PIL import Image
 from skimage.segmentation import slic
 from matplotlib import pyplot as plt
@@ -7,6 +6,8 @@ import numpy as np
 import matplotlib.patches as mpatches
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import AffinityPropagation
+
+from LAVIS.lavis.models import load_model_and_preprocess
 from nlp import get_noun_chunks, load_spacy
 import spacy
 
@@ -30,8 +31,8 @@ def merge_clusters(clusters, embs, device, threshold=0.995):
     most_similar = np.unravel_index(similarities.argmax(), similarities.shape)
 
     while similarities[most_similar] > threshold:
-        print("Similarity: ", similarities[most_similar])
-        print("Merging clusters")
+        # print("Similarity: ", similarities[most_similar])
+        # print("Merging clusters")
         clusters[clusters == most_similar[1]] = most_similar[0]
         for i in range(most_similar[1], np.max(clusters)):
             clusters[clusters == i + 1] = i
@@ -113,6 +114,14 @@ def maskblip_segmentation(raw_image, model, device, vis_processors, n_segments=2
 
     if refine:
         clusters = refine_clusters(clusters, np.asarray(raw_image), n_segments=150, compactness=20, sigma=5)
+        captions = [captions[i-1] for i in np.unique(clusters)]
+        unique = np.unique(clusters)
+        new_clusters  = np.zeros_like(clusters)
+        for i in range(len(unique)):
+            new_clusters[clusters == unique[i]] = i
+        clusters = new_clusters
+
+
 
     if plot:
         plot_results(clusters, captions, raw_image)

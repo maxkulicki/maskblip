@@ -76,7 +76,7 @@ def get_cluster_captions(clusters, image_emb, model, device):
     # slice image_emb using cluster indices
     cluster_embs = []
     for i in range(len(cluster_indices)):
-        cluster_embs.append(image_emb[:, :-1, :].squeeze().detach().cpu().numpy()[cluster_indices[i]])
+        cluster_embs.append(image_emb[:, :-1, :].squeeze()[cluster_indices[i]])
 
     prompt = [model.prompt]  # * image_embeds.size(0)
     prompt = model.tokenizer(prompt, return_tensors="pt").to(device)
@@ -143,6 +143,7 @@ def get_ade20k_labels(annotations_path):
 def evaluate_captioning_method(model, device, lemmatizer, local=True, threshold=0.995, n_segments=10, n_samples=10, plot=True):
     recalls = []
     precisions = []
+    avg_n_clusters = 0
     for image_path in os.listdir(ade20k_dir)[:n_samples]:
         # check if the image ends with png
         if (image_path.endswith(".jpg")):
@@ -175,6 +176,8 @@ def evaluate_captioning_method(model, device, lemmatizer, local=True, threshold=
                 #print("Local caption nouns: ", caption_nouns)
 
                 recall, precision = get_recall_precision(caption_nouns, labels)
+                n_clusters = len(np.unique(clusters))
+                avg_n_clusters += n_clusters
 
             recalls.append(recall)
             precisions.append(precision)
@@ -182,6 +185,7 @@ def evaluate_captioning_method(model, device, lemmatizer, local=True, threshold=
 
     avg_recall = round(np.mean(recalls), 5)
     avg_precision = round(np.mean(precisions), 5)
+    avg_n_clusters = round(avg_n_clusters / n_samples, 5)
 
     print("Average recall: ", avg_recall)
     print("Average precision: ", avg_precision)
@@ -200,8 +204,25 @@ def evaluate_captioning_method(model, device, lemmatizer, local=True, threshold=
         axs[1].set_xlabel("Precision")
         axs[1].set_title("Average precision: " + str(avg_precision))
         plt.show()
-    return avg_recall, avg_precision
+    return avg_recall, avg_precision, avg_n_clusters
 
+def plot_metric(metrics, metric_name, thresholds, segment_numbers):
+    metrics = np.array(metrics).reshape(len(thresholds), len(segment_numbers))
+    fig, ax = plt.subplots()
+    ax.matshow(metrics, cmap='seismic')
+    ax.tick_params(top=False, labeltop=False, bottom=True, labelbottom=True)
+    ax.set_title(metric_name)
+    ax.set_xticks(np.arange(len(segment_numbers)))
+    ax.set_yticks(np.arange(len(thresholds)))
+    ax.set_xticklabels(segment_numbers)
+    ax.set_yticklabels(thresholds)
+    ax.set_xlabel('Number of segments')
+    ax.set_ylabel('Threshold')
+    for (i, j), z in np.ndenumerate(metrics):
+        ax.text(j, i, '{:0.3f}'.format(z), ha='center', va='center',
+                bbox=dict(boxstyle='round', facecolor='white', edgecolor='0.3'))
+    plt.tight_layout()
+    plt.show()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
@@ -214,51 +235,24 @@ full_image_precisions = []
 n_samples = 64
 
 ade20k_dir = "datasets/original_ade20k/"
-thresholds = [0.995, 0.997, 0.999, 0.9995]
-segment_numbers = [5, 10, 15, 20]
+thresholds = [0.9995, 0.9999,  0.99995]
+segment_numbers = [20, 25, 30, 35, 40]
 clustering_methods = [(x, y) for x in thresholds for y in segment_numbers]
 
 print("Evaluating global captioning")
 evaluate_captioning_method(model, device, lemmatizer, local=False, n_samples=n_samples)
 recalls = []
 precisions = []
+cluster_numbers = []
+
 for threshold, n_segments in clustering_methods:
     print(f"Evaluating local captioning with threshold {threshold} and {n_segments} segments")
-    recall, precision = evaluate_captioning_method(model, device, lemmatizer, local=True, threshold=threshold,\
+    recall, precision, cluster_number = evaluate_captioning_method(model, device, lemmatizer, local=True, threshold=threshold,\
                                             n_segments=n_segments, n_samples=n_samples, plot=False)
     recalls.append(recall)
     precisions.append(precision)
+    cluster_numbers.append(cluster_number)
 
-recalls = np.array(recalls).reshape(len(thresholds), len(segment_numbers))
-fig, ax = plt.subplots()
-ax.matshow(recalls, cmap='seismic')
-ax.set_title("Recall")
-ax.set_xticks(np.arange(len(thresholds)))
-ax.set_yticks(np.arange(len(segment_numbers)))
-ax.set_xticklabels(thresholds)
-ax.set_yticklabels(segment_numbers)
-ax.set_xlabel('Threshold')
-ax.set_ylabel('Number of segments')
-for (i, j), z in np.ndenumerate(recalls):
-    ax.text(j, i, '{:0.3f}'.format(z), ha='center', va='center',
-            bbox=dict(boxstyle='round', facecolor='white', edgecolor='0.3'))
-plt.show()
-
-precisions = np.array(precisions).reshape(len(thresholds), len(segment_numbers))
-fig, ax = plt.subplots()
-ax.matshow(precisions, cmap='seismic')
-ax.set_title("Precision")
-ax.set_xticks(np.arange(len(thresholds)))
-ax.set_yticks(np.arange(len(segment_numbers)))
-ax.set_xticklabels(thresholds)
-ax.set_yticklabels(segment_numbers)
-ax.set_xlabel('Threshold')
-ax.set_ylabel('Number of segments')
-for (i, j), z in np.ndenumerate(precisions):
-    ax.text(j, i, '{:0.3f}'.format(z), ha='center', va='center',
-            bbox=dict(boxstyle='round', facecolor='white', edgecolor='0.3'))
-plt.show()
-
-
-
-
+plot_metric(recalls, "Average Recall", thresholds, segment_numbers)
+plot_metric(precisions, "Average precision", thresholds, segment_numbers)
+plot_metric(cluster_numbers, "Average nr of clusters", thresholds, segment_numbers)

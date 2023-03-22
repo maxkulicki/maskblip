@@ -1,4 +1,9 @@
 import spacy
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy.spatial import distance
+from sentence_transformers import SentenceTransformer, util
+import torch
 def filter_substrings(noun_chunks):
     noun_chunks = list(set(noun_chunks))
     filtered_chunks = []
@@ -39,14 +44,35 @@ def get_noun_chunks(captions, spacy_model):
         cap = remove_repeated_words(cap)
         doc = spacy_model(cap)
         chunks = [str(chunk) for chunk in doc.noun_chunks]
-        #chunks = remove_repeated_words(chunks)
         chunks = remove_articles(chunks)
         all_chunks += chunks
     all_chunks = filter_substrings(all_chunks)
     return all_chunks
 
+
+def find_matching_labels(chunks, labels, model=None, background=False):
+    if background:
+        labels += ['background', 'unknown']
+    if model is None:
+        model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    matching_labels = []
+    label_vectors = torch.stack([model.encode(label, convert_to_tensor=True) for label in labels]).squeeze()
+    chunk_vectors = [model.encode(chunk, convert_to_tensor=True) for chunk in chunks]
+    for chunk_v in chunk_vectors:
+        cos_sim = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
+        similarities = cos_sim(chunk_v, label_vectors)
+        #distances = distance.cdist(chunk_v, label_vectors, "cosine")[0]
+        closest_idx = torch.argmax(similarities)
+        matching_labels.append(labels[closest_idx])
+    return matching_labels
+
+
+
 if __name__ == "__main__":
-    spacy_model = load_spacy()
+    spacy_model = load_spacy(model = "en_core_web_trf")
+
+    find_matching_labels(['a giraffe', 'zebras', 'ostriches', 'a person standing in front of a white wall', 'water water water'], [['zebra'], ['giraffe'], ['ostrich'], ['person'], ['water']], spacy_model)
+
     captions = ['a giraffe', 'zebras', 'ostriches', 'a person standing in front of a white wall', 'water water water']
     chunks = get_noun_chunks(captions, spacy_model)
     print(chunks)
