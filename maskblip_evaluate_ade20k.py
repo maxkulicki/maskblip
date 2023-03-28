@@ -1,3 +1,4 @@
+#from maskblip import maskblip_segmentation
 import os
 import torch
 from lavis.models import load_model_and_preprocess
@@ -102,8 +103,6 @@ def get_cluster_captions(clusters, image_emb, model, device):
     return captions
 
 def synset_match(nouns, synset):
-    if 'cow' in nouns:
-        print("cow in nouns")
     for noun in nouns:
         for syn in synset:
             if noun.strip() in syn.split(" "):

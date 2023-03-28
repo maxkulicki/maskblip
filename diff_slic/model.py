@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from diff_slic.lib.ssn.ssn import ssn_iter, sparse_ssn_iter
+from diff_slic.lib.ssn.ssn import ssn
 
 
 def conv_bn_relu(in_c, out_c):
@@ -10,46 +10,25 @@ def conv_bn_relu(in_c, out_c):
         nn.ReLU(True)
     )
 
+
 class SSNModel(nn.Module):
-    def __init__(self, feature_dim, nspix, n_iter=10):
+    def __init__(self, nspix=4, n_iter=10, spatial_importance=1):
         super().__init__()
         self.nspix = nspix
         self.n_iter = n_iter
-
-        self.scale1 = nn.Sequential(
-            conv_bn_relu(5, 64),
-            conv_bn_relu(64, 64)
-        )
-        self.scale2 = nn.Sequential(
-            nn.MaxPool2d(3, 2, padding=1),
-            conv_bn_relu(64, 64),
-            conv_bn_relu(64, 64)
-        )
-        self.scale3 = nn.Sequential(
-            nn.MaxPool2d(3, 2, padding=1),
-            conv_bn_relu(64, 64),
-            conv_bn_relu(64, 64)
-        )
-
-        self.output_conv = nn.Sequential(
-            nn.Conv2d(64*3+5, feature_dim-5, 3, padding=1),
-            nn.ReLU(True)
-        )
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.normal_(m.weight, 0, 0.001)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+        self.spatial_importance = spatial_importance
         
 
     def forward(self, x):
-        pixel_f = self.feature_extract(x)
 
-        if self.training:
-            return ssn_iter(pixel_f, self.nspix, self.n_iter)
-        else:
-            return sparse_ssn_iter(pixel_f, self.nspix, self.n_iter)
+        #pixel_f = self.feature_extract(x)
+        # if self.training:
+        #     return ssn_iter(pixel_f, self.nspix, self.n_iter)
+        # else:
+        #     return sparse_ssn_iter(pixel_f, self.nspix, self.n_iter)
+        x[:, 0, :, :] = x[:, 0, :, :] * self.spatial_importance
+        x[:, 1, :, :] = x[:, 1, :, :] * self.spatial_importance
+        return ssn(x, self.nspix, self.n_iter)
 
 
     def feature_extract(self, x):

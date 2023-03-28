@@ -1,3 +1,4 @@
+from lavis.models import load_model_and_preprocess
 import torch
 from PIL import Image
 from skimage.segmentation import slic
@@ -7,7 +8,6 @@ import matplotlib.patches as mpatches
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import AffinityPropagation
 
-from LAVIS.lavis.models import load_model_and_preprocess
 from nlp import get_noun_chunks, load_spacy
 import spacy
 
@@ -52,7 +52,7 @@ def merge_clusters(clusters, embs, device, threshold=0.995):
 
     return clusters
 
-def refine_clusters(blip_clusters, image, n_segments=25, compactness=10, sigma=1):
+def refine_clusters(blip_clusters, image, n_segments=150, compactness=10, sigma=1):
     image_slic = np.asarray(slic(image, n_segments=n_segments, compactness=compactness, sigma=sigma))
     new_clusters = np.zeros_like(image_slic)
     shape = (image_slic.shape[1], image_slic.shape[0])
@@ -64,18 +64,19 @@ def refine_clusters(blip_clusters, image, n_segments=25, compactness=10, sigma=1
 
     return new_clusters
 
-def maskblip_segmentation(raw_image, model, device, vis_processors, n_segments=20, threshold=0.999, refine=False, plot=False):
+def maskblip_segmentation(raw_image, model, device, vis_processors, n_segments=4, threshold=0.9995, refine=False, plot=False):
     image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
 
     # generate caption
     image_emb = model.forward_encoder({"image": image})
 
     grid_image_emb = image_emb[:, :-1, :].unflatten(1, (24, 24)).squeeze().detach().cpu().numpy()
-    slic_clusters = slic(grid_image_emb, n_segments=n_segments, compactness=0.001, sigma=1, channel_axis=2,
+    slic_clusters = slic(grid_image_emb, n_segments=n_segments, compactness=0.01, sigma=1, channel_axis=2,
                          enforce_connectivity=False)
     clusters = slic_clusters
-
+    print("clusters before merging: ", len(np.unique(clusters)))
     clusters = merge_clusters(clusters, grid_image_emb, device, threshold=threshold)
+    print("clusters after merging: ", len(np.unique(clusters)))
 
     # get flattened indices of each cluster
     cluster_indices = []
@@ -98,7 +99,7 @@ def maskblip_segmentation(raw_image, model, device, vis_processors, n_segments=2
     for emb in cluster_embs:
         decoder_out = model.text_decoder.generate_from_encoder(
             tokenized_prompt=prompt,
-            visual_embeds=torch.tensor(emb).unsqueeze(0),
+            visual_embeds=emb.clone().detach().unsqueeze(0),
             sep_token_id=model.tokenizer.sep_token_id,
             pad_token_id=model.tokenizer.pad_token_id,
             use_nucleus_sampling=False,
@@ -120,8 +121,7 @@ def maskblip_segmentation(raw_image, model, device, vis_processors, n_segments=2
         for i in range(len(unique)):
             new_clusters[clusters == unique[i]] = i
         clusters = new_clusters
-
-
+    print("clusters after refining: ", len(np.unique(clusters)))
 
     if plot:
         plot_results(clusters, captions, raw_image)
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     model, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True, device=device)
     # preprocess the image
     # vis_processors stores image transforms for "train" and "eval" (validation / testing / inference)
-    clusters, captions = maskblip_segmentation(raw_image, model, device, vis_processors, refine=True)
+    clusters, captions = maskblip_segmentation(raw_image, model, device, vis_processors, refine=False)
 
     spacy_model = load_spacy()
     chunks = get_noun_chunks(captions, spacy_model)
