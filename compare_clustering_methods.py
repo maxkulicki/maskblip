@@ -65,7 +65,7 @@ image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
 image_emb = model.forward_encoder({"image": image})[:, :-1, :]
 grid_image_emb = image_emb.unflatten(1, (24,24)).squeeze().detach().cpu().numpy()
 
-#spatial_importance = 15
+#compactness = 15
 
 
 #clustering_methods = ["slic", "kmeans", "agglomerative", "birch", "optics"]
@@ -75,7 +75,7 @@ clustering_methods = list(product(distance_thresholds, spatial_importances))
 results = {}
 for method in clustering_methods:
     # if method =="slic":
-    #     clusters = slic(grid_image_emb, n_segments=10, compactness=0.001, sigma=1, channel_axis=2, enforce_connectivity=False)
+    #     clusters = slic(grid_image_emb, n_clusters=10, compactness=0.001, sigma=1, channel_axis=2, enforce_connectivity=False)
     #     clusters = merge_clusters(clusters, grid_image_emb, threshold=0.999)
     # elif method == "dbscan":
     #     clusters = DBSCAN(eps=10, min_samples=40).fit_predict(image_emb).reshape(24, 24)

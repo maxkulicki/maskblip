@@ -6,7 +6,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from lib.utils.meter import Meter
-from model import SSNModel
+from model import SSNClusteringModel
 from lib.dataset import bsds, augmentation
 from lib.utils.loss import reconstruct_loss_with_cross_etnropy, reconstruct_loss_with_mse
 
@@ -41,7 +41,7 @@ def eval(model, loader, color_scale, pos_scale, device):
 
         height, width = inputs.shape[-2:]
 
-        nspix_per_axis = int(math.sqrt(model.nspix))
+        nspix_per_axis = int(math.sqrt(model.n_clusters))
         pos_scale = pos_scale * max(nspix_per_axis/height, nspix_per_axis/width)    
 
         coords = torch.stack(torch.meshgrid(torch.arange(height, device=device), torch.arange(width, device=device)), 0)
@@ -68,7 +68,7 @@ def update_param(data, model, optimizer, compactness, color_scale, pos_scale, de
 
     height, width = inputs.shape[-2:]
 
-    nspix_per_axis = int(math.sqrt(model.nspix))
+    nspix_per_axis = int(math.sqrt(model.n_clusters))
     pos_scale = pos_scale * max(nspix_per_axis/height, nspix_per_axis/width)    
 
     coords = torch.stack(torch.meshgrid(torch.arange(height, device=device), torch.arange(width, device=device)), 0)
@@ -96,7 +96,7 @@ def train(cfg):
     else:
         device = "cpu"
 
-    model = SSNModel(cfg.fdim, cfg.nspix, cfg.niter).to(device)
+    model = SSNClusteringModel(cfg.fdim, cfg.n_clusters, cfg.niter).to(device)
 
     optimizer = optim.Adam(model.parameters(), cfg.lr)
 
@@ -143,7 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_iter", default=500000, type=int)
     parser.add_argument("--fdim", default=20, type=int, help="embedding dimension")
     parser.add_argument("--niter", default=5, type=int, help="number of iterations for differentiable SLIC")
-    parser.add_argument("--nspix", default=100, type=int, help="number of superpixels")
+    parser.add_argument("--n_clusters", default=100, type=int, help="number of superpixels")
     parser.add_argument("--color_scale", default=0.26, type=float)
     parser.add_argument("--pos_scale", default=2.5, type=float)
     parser.add_argument("--compactness", default=1e-5, type=float)

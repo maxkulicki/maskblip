@@ -36,8 +36,8 @@ def inference(image, nspix, n_iter, fdim=None, color_scale=0.26, pos_scale=2.5, 
             An array of shape (h, w)
     """
     if weight is not None:
-        from model import SSNModel
-        model = SSNModel(fdim, nspix, n_iter).to("cuda")
+        from model import SSNClusteringModel
+        model = SSNClusteringModel(fdim, nspix, n_iter).to("cuda")
         model.load_state_dict(torch.load(weight))
         model.eval()
     else:
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     parser.add_argument("--weight", default=None, type=str, help="/path/to/pretrained_weight")
     parser.add_argument("--fdim", default=20, type=int, help="embedding dimension")
     parser.add_argument("--niter", default=10, type=int, help="number of iterations for differentiable SLIC")
-    parser.add_argument("--nspix", default=100, type=int, help="number of superpixels")
+    parser.add_argument("--n_clusters", default=100, type=int, help="number of superpixels")
     parser.add_argument("--color_scale", default=0.26, type=float)
     parser.add_argument("--pos_scale", default=2.5, type=float)
     args = parser.parse_args()
