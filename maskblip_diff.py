@@ -6,17 +6,18 @@ from matplotlib import pyplot as plt
 import cv2
 import torch.nn.functional as F
 class MaskBLIP(torch.nn.Module):
-    def __init__(self, blip_model, device, use_ssn=True, n_clusters=9, n_iter=10, compactness=3):
+    def __init__(self, blip_model, device, use_ssn=True, n_clusters=9, n_iter=10, compactness=3, merging_threshold=None):
         super().__init__()
         self.device = device
         self.BLIPcap = blip_model.to(device)
         if use_ssn:
-            self.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness)
+            self.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
         else:
-            self.clustering_model = SlicClusteringModel(n_clusters=n_clusters, n_iter=n_iter, compactness=compactness)
+            self.clustering_model = SlicClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
         self.prompt = self.init_prompt()
 
         self.captioning_adapter = torch.nn.Linear(768, 768)
+
 
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
@@ -31,7 +32,6 @@ class MaskBLIP(torch.nn.Module):
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
         #image_emb = F.interpolate(image_emb, size=image.shape(-2))
         #TODO: include the image alongside the embedding
-        #TODO: potentially add cluster merging
         clusters = self.clustering_model(image_emb)
         clusters.to(self.device)
         # get flattened indices of each cluster
@@ -66,21 +66,22 @@ class MaskBLIP(torch.nn.Module):
         return clusters.squeeze(), captions
 
 if __name__ == "__main__":
-    img_path = "images/cat.jpg"
+    img_path = "images/animals.png"
     image = Image.open(img_path)
-    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model, vis_processors, _ = load_model_and_preprocess("blip_caption", "base_coco")
     image = vis_processors["eval"](image).unsqueeze(0).to(device)
 
     compactness = 0.01
     n_clusters = 9
-    n_iter = 10
+    n_iter = 3
+    merging_threshold = 0.9999
 
-    model = MaskBLIP(model, device, use_ssn=False, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness)
+    model = MaskBLIP(model, device, use_ssn=False, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
     clusters, captions = model.forward(image)
     print(captions)
-    model.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness)
+    model.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
     soft_clusters, soft_captions = model.forward(image)
     print(soft_captions)
 
@@ -88,7 +89,7 @@ if __name__ == "__main__":
     fig.suptitle("compactness: {}, n_clusters: {}, n_iter: {}".format(compactness, n_clusters, n_iter))
     ax[0].imshow(clusters)
     ax[0].title.set_text("SLIC Clusters")
-    ax[1].imshow(soft_clusters)
+    ax[1].imshow(soft_clusters.cpu().detach().numpy())
     ax[1].title.set_text("Soft SLIC Clusters")
     plt.show()
 
