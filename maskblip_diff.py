@@ -30,7 +30,6 @@ class MaskBLIP(torch.nn.Module):
     def forward(self, image):
         captions = []
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-        #image_emb = F.interpolate(image_emb, size=image.shape(-2))
         #TODO: include the image alongside the embedding
         clusters = self.clustering_model(image_emb)
         clusters.to(self.device)
@@ -66,7 +65,7 @@ class MaskBLIP(torch.nn.Module):
         return clusters.squeeze(), captions
 
 if __name__ == "__main__":
-    img_path = "images/animals.png"
+    img_path = "images/napoleon.jpg"
     image = Image.open(img_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -75,8 +74,8 @@ if __name__ == "__main__":
 
     compactness = 0.01
     n_clusters = 9
-    n_iter = 3
-    merging_threshold = 0.9999
+    n_iter = 2
+    merging_threshold = None
 
     model = MaskBLIP(model, device, use_ssn=False, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
     clusters, captions = model.forward(image)

@@ -46,7 +46,6 @@ class ClusteringModel(nn.Module):
             avg_embedding = np.mean(np.ma.masked_array(embs, mask), axis=(1, 2))
             cluster_embs.append(avg_embedding.squeeze())
             cluster_sizes.append(size)
-            avg_embedding = torch.tensor(avg_embedding).float()
 
         similarities = cosine_similarity(cluster_embs)
         for i in range(len(similarities)):
@@ -82,10 +81,15 @@ class SSNClusteringModel(ClusteringModel):
     def __init__(self, device, n_clusters=9, n_iter=10, compactness=3, merging_threshold=None):
         super().__init__(device, n_clusters, n_iter, compactness)
         self.merging_threshold = merging_threshold
-    def forward(self, image_emb):
+    def forward(self, image_emb, training=False, parameters=None):
+        if parameters is not None:
+            n_clusters, n_iter, compactness = parameters
+        else:
+            n_clusters, n_iter, compactness = self.n_clusters, self.n_iter, self.compactness
+
         batch_size = image_emb.shape[0]
         x_pos = torch.linspace(0, 23, 24).expand(24, 24).flatten().to(
-            self.device) * self.compactness
+            self.device) * compactness
         y_pos = torch.linspace(0, 23, 24).expand(24, 24).T.flatten().to(
             self.device) * self.compactness
         image_emb_with_spatial = torch.cat(
@@ -93,8 +97,10 @@ class SSNClusteringModel(ClusteringModel):
         grid_image_emb = image_emb_with_spatial.unflatten(1, (24, 24))
         grid_image_emb[:, 0, :, :] = grid_image_emb[:, 0, :, :]
         grid_image_emb[:, 1, :, :] = grid_image_emb[:, 1, :, :]
-        clusters = ssn(self.device, grid_image_emb, self.n_clusters, self.n_iter)
-        clusters = torch.squeeze(clusters).cpu()
+
+        clusters = ssn(self.device, grid_image_emb, n_clusters, n_iter, training=training)
+
+        clusters = torch.squeeze(clusters)
         if self.merging_threshold is not None:
             clusters = self.merge_clusters(clusters, grid_image_emb.squeeze().cpu().detach().numpy())
         return clusters
@@ -114,7 +120,6 @@ class SlicClusteringModel(ClusteringModel):
 
         if self.refine:
             clusters = self.refine_clusters(clusters, np.asarray(raw_image), n_segments=150, compactness=20, sigma=5)
-
 
         return clusters
 

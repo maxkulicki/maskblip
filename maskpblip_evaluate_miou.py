@@ -4,7 +4,7 @@ import sys
 from matplotlib import pyplot as plt
 
 from maskblip import maskblip_segmentation
-
+from maskblip_diff import MaskBLIP
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 from PIL import Image
@@ -82,31 +82,36 @@ def get_ade20k_label_mapping(mapping_path):
 
     return id_to_label, label_to_id
 
-def evaluate_captioning_model(n_segments, threshold, n_samples):
+def evaluate_captioning_model(model, n_samples, device, vis_processors):
     avg_pixel_acc = 0
     avg_recall = 0
     avg_precision = 0
     avg_n_clusters = 0
+
+    ade20k_dir = "datasets/ADEChallengeData2016/"
+    mapping_path = ade20k_dir + "objectInfo150.txt"
+    id_to_label, label_to_id = get_ade20k_label_mapping(mapping_path)
+
     for image_path in os.listdir(ade20k_dir + "images/training/")[:n_samples]:
         annotations_path = ade20k_dir + "annotations/training/" + image_path.replace("jpg", "png")
         annotations = np.asarray(Image.open(annotations_path))
         labels = [id_to_label[str(label_id)] for label_id in np.unique(annotations) if label_id != 0]
-
         image_path = ade20k_dir + "images/training/" + image_path
         image = Image.open(image_path)
-        output_segmentation, output_labels = maskblip_segmentation(image, model, device, vis_processors, refine=True, n_segments=n_segments, threshold=threshold)
+        image = vis_processors["eval"](image).unsqueeze(0).to(device)
+        output_segmentation, output_labels = model.forward(image)
         n_clusters = len(np.unique(output_segmentation))
         recall, precision = get_recall_precision(output_labels, labels)
 
-
         # matching captions with ground truth labels
-        output_labels = find_matching_labels(output_labels, labels, model=similarity_model, background=True)
-        output_ids = [0 if label in ['unknown', 'background'] else label_to_id[label] for label in output_labels]
-        for idx, output in enumerate(np.unique(output_segmentation)):
-            output_segmentation[output_segmentation == output] = output_ids[idx]
-
-
-        pixel_acc = pixel_accuracy(annotations, output_segmentation, include_background=True)
+        # output_labels = find_matching_labels(output_labels, labels, model=similarity_model, background=True)
+        # output_ids = [0 if label in ['unknown', 'background'] else label_to_id[label] for label in output_labels]
+        # for idx, output in enumerate(np.unique(output_segmentation)):
+        #     output_segmentation[output_segmentation == output] = output_ids[idx]
+        #
+        #
+        # pixel_acc = pixel_accuracy(annotations, output_segmentation, include_background=True)
+        pixel_acc = 0
 
         avg_pixel_acc += pixel_acc
         avg_recall += recall
@@ -131,38 +136,43 @@ def plot_metric(metrics, metric_name, thresholds, segment_numbers):
     ax.set_xticklabels(segment_numbers)
     ax.set_yticklabels(thresholds)
     ax.set_xlabel('Number of segments')
-    ax.set_ylabel('Threshold')
+    ax.set_ylabel('N_iters')
     for (i, j), z in np.ndenumerate(metrics):
         ax.text(j, i, '{:0.3f}'.format(z), ha='center', va='center',
                 bbox=dict(boxstyle='round', facecolor='white', edgecolor='0.3'))
     plt.tight_layout()
     plt.show()
 
-
 if __name__ == "__main__":
     ade20k_dir = "datasets/ADEChallengeData2016/"
     mapping_path = ade20k_dir + "objectInfo150.txt"
     id_to_label, label_to_id = get_ade20k_label_mapping(mapping_path)
-    n_samples = 1003
+    n_samples = 5
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
-    model, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True,
+    blip_model, vis_processors, _ = load_model_and_preprocess(name="blip_caption", model_type="base_coco", is_eval=True,
                                                          device=device)
-    #spacy_model = load_spacy()
+
+
     similarity_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-    thresholds = [0.999, 0.9999, 0.99995]
-    segment_numbers = [4, 9, 16, 25]
-    clustering_methods = [(x, y) for x in thresholds for y in segment_numbers]
+    #thresholds = [0.999, 0.9999, 0.99995]
+    segment_numbers = [9, 16]
+    n_iters = [3, 5, 10]
+    merging_threshold = 0.9995
+    clustering_methods = [(x, y) for x in n_iters for y in segment_numbers]
 
     pixel_accuracies = []
     recalls = []
     precisions = []
     cluster_numbers = []
 
-    for threshold, n_segments in clustering_methods:
-        print(f"Evaluating local captioning with threshold {threshold} and {n_segments} segments")
-        pix_accuracy, recall, precision, cluster_number = evaluate_captioning_model(n_segments, threshold, n_samples)
+    for n_iter, n_clusters in clustering_methods:
+        model = MaskBLIP(blip_model, device, n_clusters=n_clusters, n_iter=n_iter, compactness=0.01,
+                         merging_threshold=merging_threshold)
+
+        print(f"Evaluating local captioning with {n_iters} iters and {n_clusters} segments")
+        pix_accuracy, recall, precision, cluster_number = evaluate_captioning_model(model, n_clusters, n_iter, n_samples)
         pixel_accuracies.append(pix_accuracy)
         recalls.append(recall)
         precisions.append(precision)
@@ -172,7 +182,7 @@ if __name__ == "__main__":
         print(f"Precision: {precision}")
         print(f"Number of clusters: {cluster_number}")
 
-    plot_metric(pixel_accuracies, "Average pixel accuracy", thresholds, segment_numbers)
-    plot_metric(recalls, "Average Recall", thresholds, segment_numbers)
-    plot_metric(precisions, "Average precision", thresholds, segment_numbers)
-    plot_metric(cluster_numbers, "Average nr of clusters", thresholds, segment_numbers)
+    plot_metric(pixel_accuracies, "Average pixel accuracy", n_iters, segment_numbers)
+    plot_metric(recalls, "Average Recall", n_iters, segment_numbers)
+    plot_metric(precisions, "Average precision", n_iters, segment_numbers)
+    plot_metric(cluster_numbers, "Average nr of clusters", n_iters, segment_numbers)
