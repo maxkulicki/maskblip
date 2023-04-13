@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 import cv2
 import torch.nn.functional as F
 class MaskBLIP(torch.nn.Module):
-    def __init__(self, blip_model, device, use_ssn=True, n_clusters=9, n_iter=10, compactness=3, merging_threshold=None):
+    def __init__(self, blip_model, device, use_ssn=True,  n_clusters=9, n_iter=3, compactness=0.01, merging_threshold=None):
         super().__init__()
         self.device = device
         self.BLIPcap = blip_model.to(device)
@@ -65,7 +65,7 @@ class MaskBLIP(torch.nn.Module):
         return clusters.squeeze(), captions
 
 if __name__ == "__main__":
-    img_path = "images/napoleon.jpg"
+    img_path = "images/img1.jpg"
     image = Image.open(img_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -74,7 +74,7 @@ if __name__ == "__main__":
 
     compactness = 0.01
     n_clusters = 9
-    n_iter = 2
+    n_iter = 6
     merging_threshold = None
 
     model = MaskBLIP(model, device, use_ssn=False, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)

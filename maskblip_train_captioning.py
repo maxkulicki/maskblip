@@ -123,19 +123,3 @@ if __name__ == "__main__":
         print(labels)
 
 
-
-
-    #
-    # for image_path in os.listdir(ade20k_dir + "images/training/")[:n_samples]:
-    #     annotations_path = ade20k_dir + "annotations/training/" + image_path.replace("jpg", "png")
-    #     annotations = np.asarray(Image.open(annotations_path))
-    #     labels = [id_to_label[str(label_id)] for label_id in np.unique(annotations) if label_id != 0]
-    #
-    #     image_path = ade20k_dir + "images/training/" + image_path
-    #     image = Image.open(image_path)
-    #     image = vis_processors["eval"](image).unsqueeze(0).to(device)
-    #     output_segmentation, output_labels = model.forward(image)
-    #     print(output_labels)
-    #     print(labels)
-
-
