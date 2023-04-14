@@ -14,7 +14,7 @@ def conv_bn_relu(in_c, out_c):
     )
 
 class ClusteringModel(nn.Module):
-    def __init__(self, device, n_clusters=9, n_iter=10, compactness=3, merging_threshold=None):
+    def __init__(self, device, n_clusters=4, n_iter=5, compactness=0.001, merging_threshold=None):
         super().__init__()
         self.n_clusters = n_clusters
         self.n_iter = n_iter
@@ -78,20 +78,18 @@ class ClusteringModel(nn.Module):
 
 
 class SSNClusteringModel(ClusteringModel):
-    def __init__(self, device, n_clusters=9, n_iter=3, compactness=0.01, merging_threshold=None):
+    def __init__(self, device, n_clusters=4, n_iter=5, compactness=0.001, merging_threshold=None):
         super().__init__(device, n_clusters, n_iter, compactness)
         self.merging_threshold = merging_threshold
     def forward(self, image_emb, training=False, parameters=None):
+        batch_size = image_emb.shape[0]
         if parameters is not None:
             n_clusters, n_iter, compactness = parameters
         else:
-            n_clusters, n_iter, compactness = self.n_clusters, self.n_iter, self.compactness
+            n_clusters = torch.full((batch_size,), self.n_clusters).to(self.device)
+            n_iter = torch.full((batch_size,), self.n_iter).to(self.device)
+            compactness = torch.full((batch_size,), self.compactness).to(self.device)
 
-        if not torch.is_tensor(compactness):
-            compactness = torch.tensor(compactness).to(self.device)
-            n_clusters = torch.tensor(n_clusters).to(self.device)
-
-        batch_size = image_emb.shape[0]
         x_pos = torch.linspace(0, 23, 24).expand(24, 24).flatten().to(
             self.device) * compactness.view(-1,1)
         y_pos = torch.linspace(0, 23, 24).expand(24, 24).T.flatten().to(
@@ -101,7 +99,7 @@ class SSNClusteringModel(ClusteringModel):
         grid_image_emb = image_emb_with_spatial.unflatten(1, (24, 24))
         grid_image_emb[:, 0, :, :] = grid_image_emb[:, 0, :, :]
         grid_image_emb[:, 1, :, :] = grid_image_emb[:, 1, :, :]
-
+        print(n_clusters, n_iter)
         clusters = ssn(self.device, grid_image_emb, n_clusters, n_iter, training=training)
 
         # clusters = torch.squeeze(clusters)
@@ -112,7 +110,7 @@ class SSNClusteringModel(ClusteringModel):
         return clusters
 
 class SlicClusteringModel(ClusteringModel):
-    def __init__(self, device, n_clusters=9, n_iter=3, compactness=0.01, merging_threshold=None):
+    def __init__(self, device, n_clusters=4, n_iter=6, compactness=0.01, merging_threshold=None):
         super().__init__(device, n_clusters, n_iter, compactness)
         self.refine = False
         self.merging_threshold = merging_threshold
