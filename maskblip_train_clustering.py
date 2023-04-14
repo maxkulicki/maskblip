@@ -6,9 +6,15 @@ from PIL import Image
 import numpy as np
 import torch
 from lavis.models import load_model_and_preprocess
+from lavis.models.vit import Attention
 import torch.nn as nn
 from segmentation_dataset import SegmentationDataset
 import wandb
+
+class embedding_adapter(nn.Module):
+    def __init__(self, embed_dim=768, num_heads=8):
+        self.adapter = nn.MultiheadAttention(embed_dim, num_heads)
+
 
 class SLICParameterSelector(nn.Module):
     def __init__(self):
@@ -27,11 +33,11 @@ class SLICParameterSelector(nn.Module):
         x = self.fc2(x)
 
         # map to set {4,9,16,25,36}
-        n_clusters = torch.square((torch.sigmoid(x[:, 0]) * 3 ).int() + 2)
+        n_clusters = x[:, 0] * 0 + 4 #torch.square((torch.sigmoid(x[:, 0]) * 3 ).int() + 2)
         # map to int range (3,10)
         n_iters = 3 + (torch.sigmoid(x[:, 1]) * 7).int()
         # map to range (0,0.1)
-        compactness = torch.sigmoid(x[:, 2]) * 10 #torch.sigmoid(x[:, 2]) * 0 + 0.00001
+        compactness = torch.sigmoid(x[:, 2]) * 0.01 #torch.sigmoid(x[:, 2]) * 0 + 0.00001
 
         return (n_clusters, n_iters, compactness)
 
@@ -67,8 +73,18 @@ def loss_function(output, target):
     return -consistency_index(output, target)
     #return -torch.log(consistency_index(output, target))
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    np.random.seed(0)
+
+    n_samples = 100
+    batch_size =10
+    n_epochs = 10
+    lr = 0.002
+    plot = True
+    n_plots = 5
+    wandb_track = True
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -77,147 +93,102 @@ if __name__ == "__main__":
 
     parameter_selector = SLICParameterSelector().to(device)
     model = MaskBLIP(model, device)
+    adapter_layer = Attention(768)
+    adapter_layer.to(device)
+    optimizer = torch.optim.Adam(adapter_layer.parameters(), lr=lr)
 
-    cat_test = False
-    if cat_test:
-        optimizer = torch.optim.SGD(parameter_selector.parameters(), lr=2)
-
-        image = Image.open("images/cat.jpg")
-        image = vis_processors["eval"](image).unsqueeze(0).to(device)
-        image.requires_grad = True
-
-        mask = Image.open("images/cat_seg.png").convert("L")
-        mask = np.array(mask)
-        for i, u in enumerate(np.unique(mask)):
-            mask[mask == u] = i
-        mask = torch.tensor(mask).to(device)
-
-        image_emb = model.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-
-        outputs = []
-        losses = []
-        for epoch in range(5):
-            optimizer.zero_grad()
-            parameters = parameter_selector(image_emb.reshape(24,24,768).permute(2,0,1).unsqueeze(0))
-
-            output = model.clustering_model(image_emb, parameters=parameters, training=True)
-            loss = loss_function(output, mask.flatten())
-            loss.backward(retain_graph=True)
-            optimizer.step()
-
-            n_clusters, n_iters, compactness = parameters
-            print(f"Epoch {epoch}: Loss {loss.item()}, compactness {compactness.item()}, n_clusters {n_clusters.item()}, n_iters {n_iters.item()}")
-
-            hard_labels = output.argmax(2).unflatten(1, (24, 24))
-            hard_labels = hard_labels.squeeze(0).cpu().detach().numpy()
-            outputs.append(hard_labels)
-            losses.append(loss.item())
-
-        fig, ax = plt.subplots(1, len(outputs)+1, figsize=(5*len(outputs), 5))
-        ax[0].imshow(mask.cpu().detach().numpy())
-        ax[0].set_title("Ground Truth")
-        for epoch, hard_labels in enumerate(outputs):
-            ax[epoch+1].set_title("Epoch: " + str(epoch) + " Loss: " + str(round(losses[epoch], 3)))
-            ax[epoch+1].imshow(hard_labels)
-        plt.show()
-
+    if wandb_track:
+        run = wandb.init(
+            # Set the project where this run will be logged
+            project="maskblip",
+            group="adapter attention training",
+            # Track hyperparameters and run metadata
+            config={
+                "learning_rate": lr,
+                "epochs": n_epochs,
+                "batch_size": batch_size,
+                "n_samples": n_samples,
+            })
     else:
+        run = wandb.init(mode = "disabled")
 
-        n_samples = 100
-        batch_size = 1
-        n_epochs = 4
-        lr = 0.0001
-        plot = True
-        wandb_track = True
-        optimizer = torch.optim.Adam(parameter_selector.parameters(), lr=lr)
+    dataset_dir = os.path.join("datasets","VOC2012")
+    dataset = SegmentationDataset(dataset_dir, n_samples, transform=vis_processors["eval"])
 
-        if wandb_track:
-            run = wandb.init(
-                # Set the project where this run will be logged
-                project="maskblip",
-                # Track hyperparameters and run metadata
-                config={
-                    "learning_rate": lr,
-                    "epochs": n_epochs,
-                    "batch_size": batch_size,
-                    "n_samples": n_samples,
-                })
-        else:
-            run = wandb.init(mode = "disabled")
+    proportions = [.9, .1]
+    lengths = [int(p * len(dataset)) for p in proportions]
+    lengths[-1] = len(dataset) - sum(lengths[:-1])
+    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
 
-        dataset_dir = os.path.join("datasets","VOC2012")
-        dataset = SegmentationDataset(dataset_dir, n_samples, transform=vis_processors["eval"])
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_set,
+        batch_size=batch_size,
+        shuffle=True
+    )
+    val_loader = torch.utils.data.DataLoader(
+        dataset=val_set,
+        batch_size=batch_size,
+        shuffle=True
+    )
 
-        proportions = [.9, .1]
-        lengths = [int(p * len(dataset)) for p in proportions]
-        lengths[-1] = len(dataset) - sum(lengths[:-1])
-        train_set, val_set = torch.utils.data.random_split(dataset, lengths)
-
-        train_loader = torch.utils.data.DataLoader(
-            dataset=train_set,
-            batch_size=batch_size,
-            shuffle=True
-        )
-        val_loader = torch.utils.data.DataLoader(
-            dataset=val_set,
-            batch_size=batch_size,
-            shuffle=True
-        )
-
-        best_model = parameter_selector
-
-        n_plots = 5
+    best_model = parameter_selector
+    if plot:
         plots = [[] for x in range(n_plots)]
         losses = [[] for x in range(n_plots)]
         embs = []
         masks = []
         imgs = []
-        for iter, batch in enumerate(train_loader):
+        plot_loader = torch.utils.data.DataLoader(
+            dataset=train_set,
+            batch_size=1,
+            shuffle=True
+        )
+        for iter, batch in enumerate(plot_loader):
             images, annotations = batch
             images = images.to(device)
             mask = annotations.to(device)
             image_emb = model.BLIPcap.forward_encoder({"image": images})[:, :-1, :]
+            #parameters = parameter_selector(image_emb.reshape(-1, 24,24,768).permute(0, 3, 1, 2))
+            output = model.clustering_model(image_emb, parameters=None, training=False)
             embs.append(image_emb)
             masks.append(mask)
             imgs.append(images)
+            plots.append(output)
+
             if iter == n_plots-1:
                 break
 
 
-        # iterate over the data loader to process images in batches
-        for epoch in range(n_epochs):
-            for iter, batch in enumerate(train_loader):
-                parameter_selector.train()
+    # iterate over the data loader to process images in batches
+    for epoch in range(n_epochs):
+        for iter, batch in enumerate(train_loader):
+            parameter_selector.train()
 
-                images, annotations = batch
-                images.requires_grad = True
-                images = images.to(device)
-                mask = annotations.to(device)
+            images, annotations = batch
+            images.requires_grad = True
+            images = images.to(device)
+            mask = annotations.to(device)
 
-                image_emb = model.BLIPcap.forward_encoder({"image": images})[:, :-1, :]
+            image_emb = model.BLIPcap.forward_encoder({"image": images})[:, :-1, :]
+            image_emb = adapter_layer(image_emb)
+            optimizer.zero_grad(set_to_none=True)
+            #parameters = parameter_selector(image_emb.reshape(-1, 24,24,768).permute(0, 3, 1, 2))
+            output = model.clustering_model(image_emb, parameters=None, training=True)
+            loss = loss_function(output, mask.flatten(1))
+            loss.backward(retain_graph=True)
+            optimizer.step()
 
-                optimizer.zero_grad(set_to_none=True)
-                parameters = parameter_selector(image_emb.reshape(-1, 24,24,768).permute(0, 3, 1, 2))
-                output = model.clustering_model(image_emb, parameters=parameters, training=True)
-                loss = loss_function(output, mask.flatten(1))
-                loss.backward(retain_graph=True)
-                optimizer.step()
+            #n_clusters, n_iters, compactness = parameters
+            # hard_labels = output.argmax(2).unflatten(1, (24,24))
+            # hard_labels = hard_labels.squeeze(0).cpu().detach().numpy()
 
-                n_clusters, n_iters, compactness = parameters
-                # hard_labels = output.argmax(2).unflatten(1, (24,24))
-                # hard_labels = hard_labels.squeeze(0).cpu().detach().numpy()
+            wandb.log({"loss": loss.item()})
+            # wandb.log({"loss": loss.item(), "avg_n_clusters": torch.mean(n_clusters.float()).item(),
+            #            "avg_n_iters": torch.mean(n_iters.float()).item(), "avg_compactness": torch.mean(compactness).item()})
 
-                wandb.log({"loss": loss.item(), "avg_n_clusters": torch.mean(n_clusters.float()).item(),
-                           "avg_n_iters": torch.mean(n_iters.float()).item(), "avg_compactness": torch.mean(compactness).item()})
-
-
-
-                parameters = parameter_selector(image_emb.reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
-                output = model.clustering_model(image_emb, parameters=parameters, training=True)
-
-
-            avg_val_loss = 0
-            best_val_loss = np.infty
+        avg_val_loss = 0
+        best_val_loss = np.infty
+        with torch.no_grad():
             for iter, batch in enumerate(val_loader):
                 parameter_selector.eval()
 
@@ -226,9 +197,9 @@ if __name__ == "__main__":
                 mask = annotations.to(device)
 
                 image_emb = model.BLIPcap.forward_encoder({"image": images})[:, :-1, :]
-
-                parameters = parameter_selector(image_emb.reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
-                output = model.clustering_model(image_emb, parameters=parameters, training=True)
+                image_emb = adapter_layer(image_emb)
+                #parameters = parameter_selector(image_emb.reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
+                output = model.clustering_model(image_emb, parameters=None, training=True)
                 loss = loss_function(output, mask.flatten(1))
                 avg_val_loss += loss.item()
 
@@ -236,27 +207,37 @@ if __name__ == "__main__":
                     best_model = parameter_selector
                     best_val_loss = loss.item()
             avg_val_loss /= len(val_loader)
+            print("Epoch: {}, Val Loss: {}".format(epoch, avg_val_loss))
             wandb.log({"val_loss": avg_val_loss})
 
-            for i in range(n_plots):
-                parameters = parameter_selector(embs[i].reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
-                output = model.clustering_model(embs[i], parameters=parameters, training=True)
-                loss = loss_function(output, mask.flatten(1))
-                hard_labels = output[0].argmax(1).unflatten(0, (24, 24))
-                hard_labels = hard_labels.squeeze(0).cpu().detach().numpy()
-                plots[i].append(hard_labels)
-                losses[i].append(loss.item())
 
-        if plot:
-            for i in range(n_plots):
-                fig, ax = plt.subplots(1, n_epochs + 2, figsize=(5 * (n_epochs + 2), 5))
-                ax[0].imshow(np.moveaxis(imgs[i].squeeze().cpu().detach().numpy(), 0, -1))
-                ax[0].set_title("Image")
-                ax[1].imshow(masks[i].squeeze().cpu().detach().numpy())
-                ax[1].set_title("Ground Truth")
-                for epoch, hard_labels in enumerate(plots[i]):
-                    ax[epoch+2].set_title("Epoch: " + str(epoch) + " Loss: " + str(round(losses[i][epoch], 3)))
-                    ax[epoch+2].imshow(hard_labels)
-                plt.savefig(os.path.join("plots", f"result{i}.png"))
 
-        torch.save(best_model.state_dict(), os.path.join("model_weights", "slic_param_selector", "param_selector.pt"))
+            if plot:
+                for i in range(n_plots):
+                    parameters = parameter_selector(embs[i].reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
+                    emb = adapter_layer(embs[i])
+                    output = model.clustering_model(emb, parameters=None, training=True)
+                    loss = loss_function(output, mask.flatten(1))
+                    hard_labels = output[0].argmax(1).unflatten(0, (24, 24))
+                    hard_labels = hard_labels.squeeze(0).cpu().detach().numpy()
+                    result = (hard_labels-np.min(hard_labels))/(np.max(hard_labels)-np.min(hard_labels))
+                    result = wandb.Image(result, caption="Epoch: " + str(epoch) + " Loss: " + str(loss.item()))
+                    wandb.log({"examples": result})
+                    plots[i].append(hard_labels)
+                    losses[i].append(loss.item())
+
+    if plot:
+        for i in range(n_plots-1):
+            fig, ax = plt.subplots(1, n_epochs + 2, figsize=(5 * (n_epochs + 2), 10))
+            ax[0].imshow(np.moveaxis(imgs[i].squeeze().cpu().detach().numpy(), 0, -1))
+            ax[0].set_title("Image")
+            ax[1].imshow(masks[i].squeeze().cpu().detach().numpy())
+            ax[1].set_title("Ground Truth")
+            ax[2].imshow(plots[i][0])
+            ax[2].set_title("No adapter")
+            for epoch, hard_labels in enumerate(plots[i+1]):
+                ax[epoch+2].set_title("Epoch: " + str(epoch) + " Loss: " + str(round(losses[i][epoch], 3)))
+                ax[epoch+2].imshow(hard_labels)
+            plt.savefig(os.path.join("plots", f"result{i}.png"))
+
+    torch.save(best_model.state_dict(), os.path.join("model_weights", "slic_param_selector", "param_selector.pt"))
