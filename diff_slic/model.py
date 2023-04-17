@@ -5,6 +5,7 @@ from skimage.segmentation import slic
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 from PIL import Image
+import json
 
 def conv_bn_relu(in_c, out_c):
     return nn.Sequential(
@@ -14,7 +15,7 @@ def conv_bn_relu(in_c, out_c):
     )
 
 class ClusteringModel(nn.Module):
-    def __init__(self, device, n_clusters=4, n_iter=5, compactness=0.001, merging_threshold=None):
+    def __init__(self, device, n_clusters, n_iter, compactness, merging_threshold=None):
         super().__init__()
         self.n_clusters = n_clusters
         self.n_iter = n_iter
@@ -78,9 +79,10 @@ class ClusteringModel(nn.Module):
 
 
 class SSNClusteringModel(ClusteringModel):
-    def __init__(self, device, n_clusters=4, n_iter=5, compactness=0.001, merging_threshold=None):
+    def __init__(self, device, n_clusters, n_iter, compactness, merging_threshold=None):
         super().__init__(device, n_clusters, n_iter, compactness)
         self.merging_threshold = merging_threshold
+        self.init_data = json.load(open('centroid_data.dict', 'r'))
     def forward(self, image_emb, training=False, parameters=None):
         batch_size = image_emb.shape[0]
         if parameters is not None:
@@ -99,8 +101,7 @@ class SSNClusteringModel(ClusteringModel):
         grid_image_emb = image_emb_with_spatial.unflatten(1, (24, 24))
         grid_image_emb[:, 0, :, :] = grid_image_emb[:, 0, :, :]
         grid_image_emb[:, 1, :, :] = grid_image_emb[:, 1, :, :]
-        print(n_clusters, n_iter)
-        clusters = ssn(self.device, grid_image_emb, n_clusters, n_iter, training=training)
+        clusters = ssn(grid_image_emb, n_clusters, n_iter, self.init_data, training=training)
 
         # clusters = torch.squeeze(clusters)
         # if self.merging_threshold is not None:

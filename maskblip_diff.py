@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 import cv2
 import torch.nn.functional as F
 class MaskBLIP(torch.nn.Module):
-    def __init__(self, blip_model, device, use_ssn=True,  n_clusters=9, n_iter=3, compactness=0.01, merging_threshold=None):
+    def __init__(self, blip_model, device, use_ssn=True,  n_clusters=4, n_iter=3, compactness=0.001, merging_threshold=None):
         super().__init__()
         self.device = device
         self.BLIPcap = blip_model.to(device)
@@ -16,7 +16,7 @@ class MaskBLIP(torch.nn.Module):
             self.clustering_model = SlicClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
         self.prompt = self.init_prompt()
 
-        self.captioning_adapter = torch.nn.Linear(768, 768)
+        #self.captioning_adapter = torch.nn.Linear(768, 768)
 
 
     def init_prompt(self):
@@ -30,7 +30,6 @@ class MaskBLIP(torch.nn.Module):
     def forward(self, image):
         captions = []
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-        #TODO: include the image alongside the embedding
         clusters = self.clustering_model(image_emb)
         clusters.to(self.device)
         # get flattened indices of each cluster
@@ -73,11 +72,11 @@ if __name__ == "__main__":
     image = vis_processors["eval"](image).unsqueeze(0).to(device)
 
     compactness = 0.01
-    n_clusters = 9
+    n_clusters = 3
     n_iter = 6
     merging_threshold = None
 
-    model = MaskBLIP(model, device, use_ssn=False, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
+    model = MaskBLIP(model, device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
     clusters, captions = model.forward(image)
     print(captions)
     model.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
