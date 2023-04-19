@@ -14,20 +14,24 @@ import wandb
 class embedding_adapter(nn.Module):
     def __init__(self, device, embed_dim=768):
         super(embedding_adapter, self).__init__()
-        self.adapter = Attention(embed_dim)
+        self.adapter = Attention(embed_dim+2, num_heads=7)
         self.adapter.to(device)
         self.batch_norm = nn.BatchNorm1d(576)
         self.batch_norm.to(device)
+        self.device = device
     def forward(self, x):
+        batch_size = x.shape[0]
+        x_pos = torch.linspace(0, 23, 24).expand(24, 24).flatten().unsqueeze(0).unsqueeze(2).repeat(batch_size,1,1).to(self.device)
+        y_pos = torch.linspace(0, 23, 24).expand(24, 24).T.flatten().unsqueeze(0).unsqueeze(2).repeat(batch_size, 1, 1).to(self.device)
+        x = torch.cat((x_pos, y_pos, x), dim=2)
         x = self.adapter(x)
         x = self.batch_norm(x)
         return x
 
-
 class SLICParameterSelector(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size=768):
         super(SLICParameterSelector, self).__init__()
-        self.conv1 = nn.Conv2d(768, 32, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(input_size, 32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.fc1 = nn.Linear(64 * 6 * 6, 128)
@@ -48,7 +52,7 @@ class SLICParameterSelector(nn.Module):
 
         return (n_clusters, n_iters, compactness)
 
-def consistency_index(soft_partition, hard_partition):
+def consistency_index(soft_partition, hard_partition, background_importance=0.1):
     """
     Computes the consistency index between a soft partition and a hard partition.
 
@@ -62,12 +66,17 @@ def consistency_index(soft_partition, hard_partition):
     avg_result = 0
     for n, soft in enumerate(soft_partition):
         n_clusters = soft.shape[1]
+        n_gt_clusters = torch.max(hard_partition[n,:]) + 1
 
         # Compute the matrix of pairwise overlaps between clusters
-        overlap_matrix = torch.zeros((n_clusters, n_clusters))
+        overlap_matrix = torch.zeros((n_clusters, n_gt_clusters))
         for i in range(n_clusters):
-            for j in range(n_clusters):
-                overlap_matrix[i, j] = torch.sum(torch.min(soft[:, i], (hard_partition[n,:] == j).float()))
+            for j in range(n_gt_clusters):
+                if j == 0:
+                    overlap_matrix[i, j] = torch.sum(torch.min(soft[:, i], (hard_partition[n,:] == j).float()) * background_importance)
+                else:
+                    overlap_matrix[i, j] = torch.sum(torch.min(soft[:, i], (hard_partition[n,:] == j).float()))
+
 
         # Compute the numerator and denominator of the consistency index
         num = torch.max(torch.sum(overlap_matrix, dim=1))
@@ -85,6 +94,8 @@ def training_step(model, loader, optimizer, loss_function):
         optimizer.zero_grad(set_to_none=True)
         if use_adapter:
             adapter_layer.train()
+            parameter_selector.train()
+
         else:
             parameter_selector.train()
 
@@ -97,7 +108,9 @@ def training_step(model, loader, optimizer, loss_function):
         del images
         if use_adapter:
             image_emb = adapter_layer(image_emb)
-            parameters = None
+            #parameters = None
+            parameters = parameter_selector(image_emb.reshape(-1, 24, 24, 770).permute(0, 3, 1, 2))
+            n_clusters, n_iters, compactness = parameters
         else:
             parameters = parameter_selector(image_emb.reshape(-1, 24,24,768).permute(0, 3, 1, 2))
             n_clusters, n_iters, compactness = parameters
@@ -107,7 +120,9 @@ def training_step(model, loader, optimizer, loss_function):
         loss.backward(retain_graph=True)
         optimizer.step()
         if use_adapter:
-            wandb.log({"train_loss": loss.item()})
+            wandb.log({"train_loss": loss.item(), "n_clusters": torch.mean(n_clusters.float()).item(),
+                       "n_iters": torch.mean(n_iters.float()).item(), "compactness": torch.mean(compactness.float()).item()})
+            #wandb.log({"train_loss": loss.item()})
         else:
             wandb.log({"train_loss": loss.item(), "n_clusters": torch.mean(n_clusters.float()).item(),
                        "n_iters": torch.mean(n_iters.float()).item(), "compactness": torch.mean(compactness.float()).item()})
@@ -119,6 +134,7 @@ def validation_step(model, val_loader, epoch, loss_function, best_val_loss, best
     for iter, batch in enumerate(val_loader):
         if use_adapter:
             adapter_layer.eval()
+            parameter_selector.eval()
         else:
             parameter_selector.eval()
 
@@ -130,7 +146,9 @@ def validation_step(model, val_loader, epoch, loss_function, best_val_loss, best
         del images
         if use_adapter:
             image_emb = adapter_layer(image_emb)
-            parameters = None
+            #parameters = None
+            parameters = parameter_selector(image_emb.reshape(-1, 24, 24, 770).permute(0, 3, 1, 2))
+
         else:
             parameters = parameter_selector(image_emb.reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
         output = model.clustering_model(image_emb, parameters=parameters, training=True)
@@ -150,14 +168,14 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 1000
-    batch_size = 20
-    n_epochs = 10
-    lr = 0.002
+    n_samples = 20
+    batch_size = 1
+    n_epochs = 1
+    lr = 0.0005
     weight_decay = 0
     plot = True
     n_plots = 4
-    wandb_track = True
+    wandb_track = False
     use_adapter = True
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
@@ -165,20 +183,21 @@ if __name__ == "__main__":
     model, vis_processors, _ = load_model_and_preprocess("blip_caption", "base_coco")
     model.to(device)
 
-    parameter_selector = SLICParameterSelector().to(device)
     model = MaskBLIP(model, device)
     if use_adapter:
+        parameter_selector = SLICParameterSelector(input_size=770).to(device)
         adapter_layer = embedding_adapter(device, 768)
         adapter_layer.to(device)
-        optimizer = torch.optim.Adam(adapter_layer.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(list(adapter_layer.parameters()) + list(parameter_selector.parameters()), lr=lr, weight_decay=weight_decay)
     else:
+        parameter_selector = SLICParameterSelector().to(device)
         optimizer = torch.optim.Adam(parameter_selector.parameters(), lr=lr)
 
     if wandb_track:
         run = wandb.init(
             # Set the project where this run will be logged
             project="maskblip",
-            group="2nd attempt adapter training",
+            group="adapter+selector",
             # Track hyperparameters and run metadata
             config={
                 "weight_decay": weight_decay,
@@ -246,7 +265,8 @@ if __name__ == "__main__":
             for i in range(n_plots):
                 if use_adapter:
                     emb = adapter_layer(embs[i])
-                    output = model.clustering_model(emb, parameters=None, training=True)
+                    parameters = parameter_selector(emb.reshape(-1, 24, 24, 770).permute(0, 3, 1, 2))
+                    output = model.clustering_model(emb, parameters=parameters, training=True)
                 else:
                     emb = embs[i]
                     parameters = parameter_selector(embs[i].reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
@@ -276,8 +296,12 @@ if __name__ == "__main__":
 
             if plot:
                 for i in range(n_plots):
-                    parameters = parameter_selector(embs[i].reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
-                    emb = adapter_layer(embs[i])
+                    if use_adapter:
+                        emb = adapter_layer(embs[i])
+                        parameters = parameter_selector(emb.reshape(-1, 24, 24, 770).permute(0, 3, 1, 2))
+                    else:
+                        emb = embs[i]
+                        parameters = parameter_selector(embs[i].reshape(-1, 24, 24, 768).permute(0, 3, 1, 2))
                     output = model.clustering_model(emb, parameters=parameters, training=True)
                     loss = loss_function(output, mask.flatten(1))
                     hard_labels = output[0].argmax(1).unflatten(0, (24, 24))

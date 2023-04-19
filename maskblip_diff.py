@@ -5,8 +5,24 @@ from PIL import Image
 from matplotlib import pyplot as plt
 import cv2
 import torch.nn.functional as F
+
+class CaptionAdapter(torch.nn.Module):
+    def __init__(self, device, embed_dim=768):
+        super().__init__()
+        self.device = device
+        self.embed_dim = embed_dim
+        self.layer1 = torch.nn.Linear(embed_dim, embed_dim)
+        self.layer1.to(device)
+        self.layer2 = torch.nn.Linear(embed_dim, embed_dim)
+        self.layer2.to(device)
+    def forward(self, x):
+        x = self.layer1(x)
+        x = F.relu(x)
+        x = self.layer2(x)
+        return x
+
 class MaskBLIP(torch.nn.Module):
-    def __init__(self, blip_model, device, use_ssn=True,  n_clusters=4, n_iter=3, compactness=0.001, merging_threshold=None):
+    def __init__(self, blip_model, device, use_ssn=True,  n_clusters=4, n_iter=3, compactness=0.001, merging_threshold=None, captioning_adapter=False):
         super().__init__()
         self.device = device
         self.BLIPcap = blip_model.to(device)
@@ -15,8 +31,10 @@ class MaskBLIP(torch.nn.Module):
         else:
             self.clustering_model = SlicClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
         self.prompt = self.init_prompt()
-
-        #self.captioning_adapter = torch.nn.Linear(768, 768)
+        if captioning_adapter:
+            self.captioning_adapter = CaptionAdapter(device)
+        else:
+            self.captioning_adapter = None
 
 
     def init_prompt(self):
@@ -31,7 +49,8 @@ class MaskBLIP(torch.nn.Module):
         captions = []
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
         clusters = self.clustering_model(image_emb)
-        clusters.to(self.device)
+        clusters = torch.stack(clusters, dim=0)
+        #clusters.to(self.device)
         # get flattened indices of each cluster
         cluster_indices = []
         for i in range(clusters.min(), clusters.max() + 1):
@@ -43,7 +62,8 @@ class MaskBLIP(torch.nn.Module):
             cluster_embs.append(image_emb.squeeze()[cluster_indices[i]])
 
         for emb in cluster_embs:
-            #emb = self.captioning_adapter(emb)
+            if self.captioning_adapter is not None:
+                emb = emb + self.captioning_adapter(emb)
             # generate caption for each cluster
             decoder_out = self.BLIPcap.text_decoder.generate_from_encoder(
                 tokenized_prompt=self.prompt,

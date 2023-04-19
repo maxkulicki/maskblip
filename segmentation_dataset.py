@@ -30,7 +30,7 @@ class SegmentationDataset(Dataset):
         annotation = self.annotations[idx]
         return image, annotation
 
-    def preprocess_VOC_mask(self, annotation_path):
+    def preprocess_VOC_mask(self, annotation_path, return_labels=False):
         mask = np.array(Image.open(annotation_path).resize((24, 24), Image.NEAREST))
         idxs = np.argwhere(mask == 255)
 
@@ -45,8 +45,11 @@ class SegmentationDataset(Dataset):
             # Find the most frequent value in the flattened array
             most_frequent = mode(flattened)[0][0]
             # Replace the value at the current index with the most frequent value
-            mask[row, col] = most_frequent
+            if most_frequent != 255:
+                mask[row, col] = most_frequent
+            else:
+                mask[row, col] = 0
 
-        for i, u in enumerate(np.unique(mask)):
-            mask[mask == u] = i
+        # for i, u in enumerate(np.unique(mask)):
+        #     mask[mask == u] = i
         return torch.tensor(mask)
