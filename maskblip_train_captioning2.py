@@ -14,6 +14,7 @@ from segmentation_dataset import SegmentationDataset
 import wandb
 
 def training_step(model, loader, optimizer, loss_function):
+    avg_loss = 0
     for iter, batch in enumerate(loader):
         optimizer.zero_grad()
         images, annotations = batch
@@ -21,14 +22,24 @@ def training_step(model, loader, optimizer, loss_function):
         images = images.to(device)
         mask = annotations.to(device)
         clusters, captions = model(images)
-
+        if iter in range(3):
+            fig, ax = plt.subplots(1, 2)
+            img = images[0].permute(1, 2, 0).detach().cpu().numpy()
+            m = clusters.detach().cpu().numpy()
+            ax[0].imshow(img)
+            ax[1].imshow(m)
+            ax[1].set_title(str(captions).replace(",", ",\n"))
+            wandb.log({f"result{iter}": fig})
         loss = loss_function(clusters, captions, mask, model)
         loss.backward(retain_graph=True)
         optimizer.step()
         wandb.log({"train_loss": loss.item()})
         print(loss.item())
+        avg_loss += loss.item()
 
-    return loss.item()
+    wandb.log({"avg_train_loss": loss.item()})
+
+    return avg_loss / len(loader)
 
 def calculate_overlap(segmentation_map1, segmentation_map2):
     overlap_dict = {}
@@ -88,10 +99,10 @@ def captioning_loss(clusters, captions, mask, model):
 
 if __name__ == '__main__':
     batch_size = 1
-    n_samples = 20
-    n_epochs = 1
-    lr = 1e-3
-    wandb_track = False
+    n_samples = 1
+    n_epochs = 5
+    lr = 1e-1
+    wandb_track = True
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -107,7 +118,6 @@ if __name__ == '__main__':
 
     model.to(device)
     model = MaskBLIP(model, device, captioning_adapter=True)
-    label_mapping = json.load(open("VOC_mapping.json"))
 
     dataset_dir = os.path.join("datasets","VOC2012")
     dataset = SegmentationDataset(dataset_dir, n_samples, transform=vis_processors["eval"])
@@ -139,7 +149,7 @@ if __name__ == '__main__':
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=batch_size,
-        shuffle=True
+        shuffle=False
     )
     # val_loader = torch.utils.data.DataLoader(
     #     dataset=val_set,
@@ -149,3 +159,4 @@ if __name__ == '__main__':
 
     for epoch in range(n_epochs):
         train_loss = training_step(model, train_loader, optimizer, captioning_loss)
+
