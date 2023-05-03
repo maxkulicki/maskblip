@@ -1358,7 +1358,7 @@ class XBertLMHeadDecoder(BertLMHeadModel):
         else:
             # beam search
             outputs = self.generate(
-                input_ids=tokenized_prompt.input_ids,
+                input_ids=tokenized_prompt,#.input_ids,
                 max_length=max_length,
                 min_length=min_length,
                 num_beams=num_beams,
