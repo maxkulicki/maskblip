@@ -127,7 +127,7 @@ class MaskBLIP(torch.nn.Module):
 
             # generate caption for each cluster
             decoder_out = self.BLIPcap.text_decoder.generate_from_encoder(
-                tokenized_prompt=self.prompt_module(emb),
+                tokenized_prompt=self.prompt,#_module(emb),
                 visual_embeds=emb.clone().detach().unsqueeze(0),
                 sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
                 pad_token_id=self.BLIPcap.tokenizer.pad_token_id,

@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from diff_slic.lib.ssn.ssn import ssn
+from diff_slic.diffslic_lib.ssn.ssn import ssn
 from skimage.segmentation import slic
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
