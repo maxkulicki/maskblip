@@ -174,7 +174,7 @@ if __name__ == '__main__':
     wandb_track = False
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
-
+    print(device)
 
     model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
     #model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="caption_coco_opt2.7b", is_eval=True, device=device)
@@ -187,6 +187,8 @@ if __name__ == '__main__':
     model.to(device)
     del model2
     model.captioning = True
+
+    print("model loaded")
 
     dataset_dir = os.path.join("datasets","VOC2012")
     dataset = SegmentationDataset(dataset_dir, n_samples, transform=vis_processors["eval"])

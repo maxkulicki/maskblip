@@ -29,7 +29,7 @@ def make_json():
         result[i] = grid.tolist()
         plt.imshow(grid.reshape(24,24))
         plt.show()
-    with open("../../../centroid_data.dict", "w") as f:
+    with open("../../centroid_data.dict", "w") as f:
         json.dump(result, f)
 
 make_json()

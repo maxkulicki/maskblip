@@ -4,6 +4,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from scipy.spatial import distance
 from sentence_transformers import SentenceTransformer, util
 import torch
+import en_core_web_sm
 def filter_substrings(noun_chunks):
     noun_chunks = list(set(noun_chunks))
     filtered_chunks = []
@@ -35,9 +36,9 @@ def remove_repeated_words(cap):
     chunk_text_no_repeats = [word for i, word in enumerate(chunk_text) if (word != chunk_text[i-1] and i>0) or i==0]
     chunk = ' '.join(chunk_text_no_repeats)
     return chunk
-def load_spacy(model = "en_core_web_trf"):
-    spacy_model = spacy.load(model)
-    return spacy_model
+def load_spacy():
+    nlp = en_core_web_sm.load()
+    return nlp
 def get_noun_chunks(captions, spacy_model):
     all_chunks = []
     for cap in captions:
