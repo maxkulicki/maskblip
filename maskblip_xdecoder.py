@@ -4,7 +4,6 @@ from PIL import Image
 from nlp import get_noun_chunks, load_spacy
 import spacy
 import en_core_web_sm
-from maskblip import maskblip_segmentation, plot_results
 from xdecoder_semseg import load_xdecoder_model, segment_image, plot_segmentation
 from maskblip_diff import MaskBLIP
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

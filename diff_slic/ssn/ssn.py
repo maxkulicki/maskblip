@@ -1,5 +1,4 @@
 import torch
-import json
 
 
 def get_init_centroid(images, num_spixels, centroid_data):
@@ -113,7 +112,7 @@ def ssn(pixel_features, num_spixels, n_iter, init_data, training=False):
             spixel_features[idx] = spixel_features_new.squeeze().clone() / spixel_features_sum.clone()
 
         if training:
-            results.append(affinity_matrix.squeeze())
+            results.append(affinity_matrix.squeeze().unflatten(0,(width,height)))
         else:
             hard_labels = affinity_matrix.argmax(2).unflatten(1,(width,height))
             results.append(hard_labels)

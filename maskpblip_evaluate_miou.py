@@ -3,7 +3,6 @@ import sys
 
 from matplotlib import pyplot as plt
 
-from maskblip import maskblip_segmentation
 from maskblip_diff import MaskBLIP
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm

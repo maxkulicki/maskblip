@@ -8,6 +8,7 @@ import cv2
 import torch.nn.functional as F
 from lavis.models.vit import Attention
 from prompt_learner import CoOp
+from upsampler import Upsampler
 
 class CaptionAdapter(nn.Module):
     def __init__(self, device, embed_dim=768):
@@ -68,7 +69,7 @@ class SLICParameterSelector(nn.Module):
 
 class MaskBLIP(torch.nn.Module):
     def __init__(self, blip_model, device, text_encoder=None, use_ssn=True,  n_clusters=4, n_iter=3, compactness=0.001,
-                 merging_threshold=None, captioning_adapter=False, clustering_adapter=False, parameter_selector=False):
+                 merging_threshold=None, captioning_adapter=False, clustering_adapter=False, parameter_selector=False, upsampler=False):
         super().__init__()
         self.device = device
         self.BLIPcap = blip_model.to(device)
@@ -79,7 +80,7 @@ class MaskBLIP(torch.nn.Module):
         else:
             self.clustering_model = SlicClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
         self.prompt = self.init_prompt()
-        self.prompt_module = CoOp(768, self.BLIPcap.tokenizer, self.text_encoder, device)
+        #self.prompt_module = CoOp(768, self.BLIPcap.tokenizer, self.text_encoder, device)
         if captioning_adapter:
             self.captioning_adapter = CaptionAdapter(device)
         else:
@@ -92,6 +93,12 @@ class MaskBLIP(torch.nn.Module):
             self.parameter_selector = SLICParameterSelector(device)
         else:
             self.parameter_selector = None
+        if upsampler:
+            self.upsampler = Upsampler()
+            self.upsampler.to(device)
+
+        else:
+            self.upsampler = None
 
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
@@ -153,13 +160,20 @@ class MaskBLIP(torch.nn.Module):
             params = self.parameter_selector(image_emb)
         else:
             params = None
-        clusters = self.clustering_model(image_emb, parameters=params)
+        clusters = self.clustering_model(image_emb, parameters=params, training=self.training)
         clusters = torch.stack(clusters, dim=0)
-        #clusters.to(self.device)
+        clusters = clusters.type(torch.FloatTensor).to(self.device)
+
+        if self.upsampler is not None:
+            out_clusters = F.pad(clusters, (10 - clusters.size(3), 0, 0, 0, 0, 0, 0, 0))
+            out_clusters = self.upsampler(out_clusters)
+        else:
+            out_clusters = clusters
 
         if self.captioning:
             # get flattened indices of each cluster
             cluster_indices = []
+            clusters = torch.argmax(clusters, 3)
             for i in range(clusters.min(), clusters.max() + 1):
                 cluster_indices.append(torch.where(clusters.flatten() == i))
 
@@ -189,9 +203,10 @@ class MaskBLIP(torch.nn.Module):
                 caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
                 captions.append(caption[0])
 
-            return clusters.squeeze(), captions
+            return out_clusters.squeeze(), captions
+
         else:
-            return clusters.squeeze()
+            return out_clusters.squeeze()
 
 if __name__ == "__main__":
     img_path = "images/bear.jpg"

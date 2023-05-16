@@ -6,7 +6,8 @@ import numpy as np
 from scipy.stats import mode
 
 class SegmentationDataset(Dataset):
-    def __init__(self, dataset_dir, n_samples=None, transform=None):
+    def __init__(self, dataset_dir, n_samples=None, transform=None, img_size=(24, 24)):
+        self.img_size = img_size
         with open(os.path.join(dataset_dir, "ImageSets", "Segmentation", "train.txt")) as file:
             imageIDs = [line.rstrip() for line in file]
 
@@ -30,8 +31,8 @@ class SegmentationDataset(Dataset):
         annotation = self.annotations[idx]
         return image, annotation
 
-    def preprocess_VOC_mask(self, annotation_path, return_labels=False):
-        mask = np.array(Image.open(annotation_path).resize((24, 24), Image.NEAREST))
+    def preprocess_VOC_mask(self, annotation_path):
+        mask = np.array(Image.open(annotation_path).resize(self.img_size, Image.NEAREST))
         idxs = np.argwhere(mask == 255)
 
         # Iterate over the indices and find most frequent value in the 8 surrounding values
