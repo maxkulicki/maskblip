@@ -165,8 +165,9 @@ class MaskBLIP(torch.nn.Module):
         clusters = clusters.type(torch.FloatTensor).to(self.device)
 
         if self.upsampler is not None:
-            out_clusters = F.pad(clusters, (10 - clusters.size(3), 0, 0, 0, 0, 0, 0, 0))
-            out_clusters = self.upsampler(out_clusters)
+
+            #out_clusters = F.pad(clusters, (10 - clusters.size(3), 0, 0, 0, 0, 0, 0, 0))
+            out_clusters = self.upsampler(clusters)
         else:
             out_clusters = clusters
 
@@ -209,7 +210,7 @@ class MaskBLIP(torch.nn.Module):
             return out_clusters.squeeze()
 
 if __name__ == "__main__":
-    img_path = "images/bear.jpg"
+    img_path = "images/cat.jpg"
     raw_image = Image.open(img_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -227,9 +228,9 @@ if __name__ == "__main__":
 
     image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
     compactness = 0.01
-    n_clusters = 4
-    n_iter = 3
-    merging_threshold = None
+    n_clusters = 9
+    n_iter = 10
+    merging_threshold = 0.999
     model.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
 
     clusters, captions = model.forward(image)
@@ -239,7 +240,7 @@ if __name__ == "__main__":
     fig.suptitle("compactness: {}, n_clusters: {}, n_iter: {}".format(compactness, n_clusters, n_iter))
     ax[0].imshow(raw_image)
     ax[0].title.set_text("img")
-    ax[1].imshow(clusters.cpu().detach().numpy())
+    ax[1].imshow(torch.argmax(clusters, 2).cpu().detach().numpy())
     ax[1].title.set_text("Soft SLIC Clusters")
     plt.show()
 

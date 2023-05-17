@@ -104,8 +104,8 @@ class SSNClusteringModel(ClusteringModel):
         clusters = ssn(grid_image_emb, n_clusters, n_iter, self.init_data, training=training)
 
         # clusters = torch.squeeze(clusters)
-        # if self.merging_threshold is not None:
-        #     clusters = self.merge_clusters(clusters, grid_image_emb.squeeze().cpu().detach().numpy())
+        if self.merging_threshold is not None:
+            clusters = self.merge_clusters(clusters[0], grid_image_emb.squeeze().cpu().detach().numpy())
         # if batch_size == 1:
         #     clusters = clusters.unsqueeze(0)
         return clusters

@@ -39,7 +39,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser('MaskCut Demo')
     # default arguments
     parser.add_argument('--out-dir', type=str, help='output directory')
-    parser.add_argument('--vit-arch', type=str, default='small', choices=['base', 'small'], help='which architecture')
+    parser.add_argument('--vit-arch', type=str, default='base', choices=['base', 'small'], help='which architecture')
     parser.add_argument('--vit-feat', type=str, default='k', choices=['k', 'q', 'v', 'kqv'], help='which features')
     parser.add_argument('--patch-size', type=int, default=8, choices=[16, 8], help='patch size')
     parser.add_argument('--img-path', type=str, default='imgs', help='single image visualization')
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     parser.add_argument('--fixed_size', type=int, default=480, help='rescale the input images to a fixed size')
     parser.add_argument('--pretrain_path', type=str, default=None, help='path to pretrained model')
     parser.add_argument('--N', type=int, default=5, help='the maximum number of pseudo-masks per image')
-    parser.add_argument('--cpu', action='store_true', help='use cpu')
+    parser.add_argument('--cpu', action='store_false', help='use cpu')
     parser.add_argument('--output_path', type=str,  default='', help='path to save outputs')
 
     args = parser.parse_args()
@@ -112,6 +112,12 @@ if __name__ == "__main__":
                 pseudo_mask_list.append(pseudo_mask)
 
         file_name = os.path.splitext(os.path.basename(img_path))[0]
+
+        input = np.array(I)
+        for pseudo_mask in pseudo_mask_list:
+            input = vis_mask(input, pseudo_mask, random_color(rgb=True))
+        input.save(os.path.join("masked_imgs", f"{file_name}.jpg"))
+
         np.savez(f'annotations/{file_name}.npz', *pseudo_mask_list)
         print(f'Saved annotation: {file_name}.npz')
 

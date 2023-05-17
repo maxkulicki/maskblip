@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 
 class Upsampler(nn.Module):
-    def __init__(self):
+    def __init__(self, n_clusters=4):
         super(Upsampler, self).__init__()
 
         # Factor 2 upsampling layer 1
         self.upsample1 = nn.Upsample(scale_factor=2, mode='bilinear')
 
         # 1x1 convolutional layer 1
-        self.conv1 = nn.Conv2d(10, 10, kernel_size=1)
+        self.conv1 = nn.Conv2d(n_clusters, n_clusters, kernel_size=1)
 
         # ReLU activation
         self.relu = nn.ReLU()
@@ -18,7 +18,7 @@ class Upsampler(nn.Module):
         self.upsample2 = nn.Upsample(scale_factor=2, mode='bilinear')
 
         # 1x1 convolutional layer 2
-        self.conv2 = nn.Conv2d(10, 10, kernel_size=1)
+        self.conv2 = nn.Conv2d(n_clusters, n_clusters, kernel_size=1)
 
         self.upsample_skip = nn.Upsample(scale_factor=4, mode='bilinear')
     def forward(self, x):

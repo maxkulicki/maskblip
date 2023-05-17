@@ -42,11 +42,13 @@ def consistency_loss(soft_partition, hard_partition, background_importance=0.1):
     return - avg_result / len(soft_partition)
 
 def custom_loss(pred, target):
-    target = target.squeeze()
+    if len(target.shape)>3:
+        target = target.squeeze()
     miou = 0
     for mask in target:
-        best_iou = torch.max(torch.sum(pred * mask, (1,2))/torch.sum(pred, (1,2)))
-        dice = 1 - 2* best_iou
+        intersection = torch.sum(pred * mask, (1,2))
+        union = torch.sum(pred, (1,2)) + torch.sum(mask) - intersection
+        best_iou = torch.max(intersection/union)
         miou += best_iou
 
     return -miou/len(target)
@@ -75,7 +77,7 @@ def training_step(model, loader, optimizer, loss_function):
     for iter, batch in enumerate(loader):
         optimizer.zero_grad(set_to_none=True)
 
-        images, annotations = batch
+        images, annotations, _ = batch
         images.requires_grad = True
         images = images.to(device)
         mask = annotations.to(device)
@@ -95,10 +97,10 @@ if __name__ == "__main__":
 
     n_samples = 20
     batch_size = 1
-    n_epochs = 10
-    lr = 0.01
+    n_epochs = 2
+    lr = 0.05
     weight_decay = 0
-    plot = False
+    plot = True
     n_plots = 4
     wandb_track = True
 
@@ -135,6 +137,7 @@ if __name__ == "__main__":
     lengths[-1] = len(dataset) - sum(lengths[:-1])
     train_set, val_set = torch.utils.data.random_split(dataset, lengths)
 
+
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=batch_size,
@@ -147,29 +150,11 @@ if __name__ == "__main__":
     )
 
     if plot:
-        plots = [[] for x in range(n_plots)]
-        losses = [[] for x in range(n_plots)]
-        embs = []
-        masks = []
-        imgs = []
         plot_loader = torch.utils.data.DataLoader(
             dataset=train_set,
             batch_size=1,
-            shuffle=True
+            shuffle=False
         )
-        for iter, batch in enumerate(plot_loader):
-            images, annotations = batch
-            images = images.to(device)
-            mask = annotations.to(device)
-            image_emb = model.BLIPcap.forward_encoder({"image": images})[:, :-1, :]
-            output = model.clustering_model(image_emb, parameters=None, training=False)
-            embs.append(image_emb)
-            masks.append(mask)
-            imgs.append(images)
-            plots.append(output)
-
-            if iter == n_plots-1:
-                break
 
     best_val_loss = np.infty
 
@@ -177,7 +162,28 @@ if __name__ == "__main__":
     #     val_loss, best_model, best_val_loss = validation_step(model, val_loader, -1, loss_function, best_val_loss,
     #                                                           best_model, parameter_selector)
     #     wandb.log({"val_loss": val_loss})
+    gt_mask_dir = os.path.join("cutler", "maskcut", "results")
+
+    for iter, batch in enumerate(plot_loader):
+        _, _, masked_image = batch
+        plot = wandb.Image(masked_image.float(), caption="Ground Truth")
+        wandb.log({f"Result{iter}": plot})
+        if iter == n_plots - 1:
+            break
 
     # iterate over the data loader to process images in batches
     for epoch in range(n_epochs):
         train_loss = training_step(model, train_loader, optimizer, custom_loss)
+
+        for iter, batch in enumerate(plot_loader):
+            images, annotations, _ = batch
+            images = images.to(device)
+            mask = annotations.to(device)
+            result = model(images)
+            loss = custom_loss(result[0], mask)
+            plot = torch.argmax(result[0], 0).float()
+            plot = plot/plot.max()
+            plot = wandb.Image(plot, caption="Epoch: " + str(epoch) + " Loss: " + str(loss))
+            wandb.log({f"Result{iter}": plot})
+            if iter == n_plots-1:
+                break
