@@ -41,7 +41,7 @@ def consistency_loss(soft_partition, hard_partition, background_importance=0.1):
     # Compute and return the consistency index
     return - avg_result / len(soft_partition)
 
-def custom_loss(pred, target):
+def best_iou_loss(pred, target):
     if len(target.shape)>3:
         target = target.squeeze()
     miou = 0
@@ -49,6 +49,10 @@ def custom_loss(pred, target):
         intersection = torch.sum(pred * mask, (1,2))
         union = torch.sum(pred, (1,2)) + torch.sum(mask) - intersection
         best_iou = torch.max(intersection/union)
+        if best_iou > 1:
+            print("wtf")
+            print(intersection)
+            print(union)
         miou += best_iou
 
     return -miou/len(target)
@@ -97,11 +101,11 @@ if __name__ == "__main__":
 
     n_samples = 20
     batch_size = 1
-    n_epochs = 2
-    lr = 0.05
+    n_epochs = 25
+    lr = 0.01
     weight_decay = 0
     plot = True
-    n_plots = 4
+    n_plots = 8
     wandb_track = True
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
@@ -165,22 +169,32 @@ if __name__ == "__main__":
     gt_mask_dir = os.path.join("cutler", "maskcut", "results")
 
     for iter, batch in enumerate(plot_loader):
-        _, _, masked_image = batch
+        images, annotations, masked_image = batch
         plot = wandb.Image(masked_image.float(), caption="Ground Truth")
+        wandb.log({f"Result{iter}": plot})
+        images = images.to(device)
+        mask = annotations.to(device)
+        result = model(images)
+        loss = best_iou_loss(result[0], mask)
+        plot = torch.argmax(result[0], 0).float()
+        plot = plot / plot.max()
+        plot = wandb.Image(plot, caption="Epoch: -1 " + " Loss: " + str(loss))
         wandb.log({f"Result{iter}": plot})
         if iter == n_plots - 1:
             break
 
+
+
     # iterate over the data loader to process images in batches
     for epoch in range(n_epochs):
-        train_loss = training_step(model, train_loader, optimizer, custom_loss)
+        train_loss = training_step(model, train_loader, optimizer, best_iou_loss)
 
         for iter, batch in enumerate(plot_loader):
             images, annotations, _ = batch
             images = images.to(device)
             mask = annotations.to(device)
             result = model(images)
-            loss = custom_loss(result[0], mask)
+            loss = best_iou_loss(result[0], mask)
             plot = torch.argmax(result[0], 0).float()
             plot = plot/plot.max()
             plot = wandb.Image(plot, caption="Epoch: " + str(epoch) + " Loss: " + str(loss))

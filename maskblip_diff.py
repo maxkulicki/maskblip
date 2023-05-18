@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from lavis.models.vit import Attention
 from prompt_learner import CoOp
 from upsampler import Upsampler
+from guided_upsampler import GuidedUpsampler
 
 class CaptionAdapter(nn.Module):
     def __init__(self, device, embed_dim=768):
@@ -94,7 +95,7 @@ class MaskBLIP(torch.nn.Module):
         else:
             self.parameter_selector = None
         if upsampler:
-            self.upsampler = Upsampler()
+            self.upsampler = GuidedUpsampler(n_clusters)
             self.upsampler.to(device)
 
         else:
@@ -165,9 +166,8 @@ class MaskBLIP(torch.nn.Module):
         clusters = clusters.type(torch.FloatTensor).to(self.device)
 
         if self.upsampler is not None:
-
             #out_clusters = F.pad(clusters, (10 - clusters.size(3), 0, 0, 0, 0, 0, 0, 0))
-            out_clusters = self.upsampler(clusters)
+            out_clusters = self.upsampler(clusters, image)
         else:
             out_clusters = clusters
 
@@ -218,7 +218,7 @@ if __name__ == "__main__":
     #model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="caption_coco_opt2.7b", is_eval=True, device=device)
     model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
                                                                       is_eval=True, device=device)
-    model = MaskBLIP(model, device, text_encoder=model2.text_encoder, captioning_adapter=True)
+    model = MaskBLIP(model, device, text_encoder=model2.text_encoder, upsampler=True)
     model.tokenizer = model2.tokenizer
     model.to(device)
     del model2
@@ -228,9 +228,9 @@ if __name__ == "__main__":
 
     image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
     compactness = 0.01
-    n_clusters = 9
+    n_clusters = 4
     n_iter = 10
-    merging_threshold = 0.999
+    merging_threshold = None#0.999
     model.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
 
     clusters, captions = model.forward(image)
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     fig.suptitle("compactness: {}, n_clusters: {}, n_iter: {}".format(compactness, n_clusters, n_iter))
     ax[0].imshow(raw_image)
     ax[0].title.set_text("img")
-    ax[1].imshow(torch.argmax(clusters, 2).cpu().detach().numpy())
+    ax[1].imshow(torch.argmax(clusters, 0).cpu().detach().numpy())
     ax[1].title.set_text("Soft SLIC Clusters")
     plt.show()
 

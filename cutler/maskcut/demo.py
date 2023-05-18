@@ -71,13 +71,14 @@ if __name__ == "__main__":
     msg = 'Load {} pre-trained feature...'.format(args.vit_arch)
     print (msg)
     backbone.eval()
+    args.cpu = False
     if not args.cpu:
         backbone.cuda()
 
     for img_path in os.listdir(args.img_path):
         img_path = os.path.join(args.img_path, img_path)
         bipartitions, _, I_new = maskcut(img_path, backbone, args.patch_size, args.tau, \
-            N=args.N, fixed_size=args.fixed_size, cpu=args.cpu)
+            N=args.N, fixed_size=args.fixed_size, cpu=False)
 
         I = Image.open(img_path).convert('RGB')
         width, height = I.size

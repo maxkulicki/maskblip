@@ -29,5 +29,5 @@ class Upsampler(nn.Module):
         x = self.relu(x)
         x = self.upsample2(x)
         x = self.conv2(x)
-        x = torch.softmax(x, dim=1)
-        return x + x_skip
+        x = torch.softmax(x + x_skip, dim=1)
+        return x
