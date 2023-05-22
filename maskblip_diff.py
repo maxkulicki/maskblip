@@ -109,6 +109,12 @@ class MaskBLIP(torch.nn.Module):
         prompt.input_ids[:, 0] = self.BLIPcap.tokenizer.bos_token_id
         prompt.input_ids = prompt.input_ids[:, :-1]
         return prompt
+
+    def cluster_cleanup(self, clusters):
+
+
+        return clusters
+
     def forward_skip_clustering(self, image, mask):
         captions = []
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]

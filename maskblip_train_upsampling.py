@@ -41,6 +41,17 @@ def consistency_loss(soft_partition, hard_partition, background_importance=0.1):
     # Compute and return the consistency index
     return - avg_result / len(soft_partition)
 
+def create_binary_masks(tensor):
+    unique_values = tensor.unique()
+    num_masks = unique_values.size(0)
+
+    binary_masks = torch.zeros((num_masks,) + tensor.shape[1:], dtype=torch.uint8, device=tensor.device)
+    for i, value in enumerate(unique_values):
+        binary_masks[i] = (tensor == value).to(torch.uint8)
+
+    return binary_masks
+
+
 def best_iou_loss(pred, target):
     if len(target.shape)>3:
         target = target.squeeze()
@@ -87,6 +98,9 @@ def training_step(model, loader, optimizer, loss_function):
         mask = annotations.to(device)
 
         output = model(images)
+        if train_supervised:
+            mask = create_binary_masks(mask)
+
         loss = loss_function(output[0], mask)
         loss.backward(retain_graph=True)
         optimizer.step()
@@ -94,6 +108,16 @@ def training_step(model, loader, optimizer, loss_function):
         wandb.log({"loss": loss.item()})
 
     return loss.item()
+
+def get_cluster_assignments(model, data_loader):
+    cluster_assignments = []
+    for iter, batch in enumerate(data_loader):
+        images, annotations, _ = batch
+        images = images.to(device)
+        output = model(images)
+        #FINISH THIS
+    return cluster_assignments
+
 
 if __name__ == "__main__":
     torch.manual_seed(0)
@@ -106,7 +130,8 @@ if __name__ == "__main__":
     weight_decay = 0
     plot = True
     n_plots = 8
-    wandb_track = True
+    wandb_track = False
+    train_supervised = True
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -132,9 +157,12 @@ if __name__ == "__main__":
             })
     else:
         run = wandb.init(mode = "disabled")
-
-    dataset_dir = os.path.join("cutler", "maskcut")
-    dataset = CutlerDataset(dataset_dir, n_samples, transform=vis_processors["eval"], img_size=(96, 96))
+    if train_supervised:
+        dataset_dir = os.path.join("datasets", "VOC2012")
+        dataset = SegmentationDataset(dataset_dir, n_samples, transform=vis_processors["eval"], img_size=(96, 96))
+    else:
+        dataset_dir = os.path.join("cutler", "maskcut")
+        dataset = CutlerDataset(dataset_dir, n_samples, transform=vis_processors["eval"], img_size=(96, 96))
 
     proportions = [.9, .1]
     lengths = [int(p * len(dataset)) for p in proportions]
@@ -170,10 +198,12 @@ if __name__ == "__main__":
 
     for iter, batch in enumerate(plot_loader):
         images, annotations, masked_image = batch
-        plot = wandb.Image(masked_image.float(), caption="Ground Truth")
+        plot = wandb.Image(masked_image.squeeze().float(), caption="Ground Truth")
         wandb.log({f"Result{iter}": plot})
         images = images.to(device)
         mask = annotations.to(device)
+        if train_supervised:
+            mask = create_binary_masks(mask)
         result = model(images)
         loss = best_iou_loss(result[0], mask)
         plot = torch.argmax(result[0], 0).float()
@@ -184,8 +214,7 @@ if __name__ == "__main__":
             break
 
 
-
-    # iterate over the data loader to process images in batches
+    cluster_assignments = get_cluster_assignments(model, train_loader)
     for epoch in range(n_epochs):
         train_loss = training_step(model, train_loader, optimizer, best_iou_loss)
 

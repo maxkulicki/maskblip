@@ -4,6 +4,7 @@ import os
 from PIL import Image
 import numpy as np
 from scipy.stats import mode
+import matplotlib.pyplot as plt
 
 class SegmentationDataset(Dataset):
     def __init__(self, dataset_dir, n_samples=None, transform=None, img_size=(24, 24)):
@@ -20,6 +21,7 @@ class SegmentationDataset(Dataset):
                              filename in imageIDs[:n_samples]]
         self.images = [transform(Image.open(image_path)) for image_path in image_paths]
         self.annotations = [self.preprocess_VOC_mask(annotation_path) for annotation_path in annotations_paths]
+        self.masked_images = [self.get_masked_image(image, annotation) for image, annotation in zip(self.images, annotations_paths)]
         #self.annotations = [torch.tensor(np.asarray(Image.open(annotation_path).resize((24, 24), Image.NEAREST))) for annotation_path in annotations_paths]
     def __len__(self):
         # this should return the size of the dataset
@@ -29,7 +31,25 @@ class SegmentationDataset(Dataset):
         # this should return one sample from the dataset
         image = self.images[idx]
         annotation = self.annotations[idx]
-        return image, annotation
+        masked_image = self.masked_images[idx]
+        return image, annotation, masked_image
+
+    def create_color_mapping(self, unique_values):
+        num_values = len(unique_values)
+        color_mapping = np.zeros((num_values, 3))
+        # Generate evenly spaced hue values
+        hues = np.linspace(0, 1, num_values)
+        for i, value in enumerate(unique_values):
+            hue = hues[i]
+            color_mapping[i] = plt.cm.hsv(hue)[:3]  # Convert hue to RGB
+        return color_mapping
+
+    def get_masked_image(self, image, annotation):
+        annotation = np.array(Image.open(annotation).resize(image.shape[1:], Image.NEAREST))
+        color_mapping = self.create_color_mapping(np.unique(annotation))
+        annotation = color_mapping[np.digitize(annotation, np.unique(annotation))-1]
+        masked_image = image*0.35 + np.transpose(annotation, [2,0,1])/0.65
+        return masked_image
 
     def preprocess_VOC_mask(self, annotation_path):
         mask = np.array(Image.open(annotation_path).resize(self.img_size, Image.NEAREST))
