@@ -62,8 +62,7 @@ def best_iou_loss(pred, target):
         best_iou = torch.max(intersection/union)
         if best_iou > 1:
             print("wtf")
-            print(intersection)
-            print(union)
+            print(best_iou)
         miou += best_iou
 
     return -miou/len(target)
@@ -99,9 +98,18 @@ def training_step(model, loader, optimizer, loss_function):
 
         output = model(images)
         if train_supervised:
-            mask = create_binary_masks(mask)
-
-        loss = loss_function(output[0], mask)
+            if batch_size > 1:
+                masks = []
+                for m in mask:
+                    m = create_binary_masks(m.unsqueeze(0))
+                    masks.append(m)
+                masks = torch.cat(masks, dim=0)
+            else:
+                masks = create_binary_masks(mask)
+        loss = 0
+        for m in masks:
+            loss += loss_function(output[0], m)
+        #loss = loss_function(output[0], masks)
         loss.backward(retain_graph=True)
         optimizer.step()
         print("Loss: {}".format(loss.item()))
@@ -123,13 +131,13 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 20
-    batch_size = 1
-    n_epochs = 25
-    lr = 0.01
+    n_samples = 10
+    batch_size = 5
+    n_epochs = 3
+    lr = 0.0005
     weight_decay = 0
-    plot = True
-    n_plots = 8
+    plot = False
+    n_plots = 4
     wandb_track = False
     train_supervised = True
 
@@ -195,38 +203,38 @@ if __name__ == "__main__":
     #                                                           best_model, parameter_selector)
     #     wandb.log({"val_loss": val_loss})
     gt_mask_dir = os.path.join("cutler", "maskcut", "results")
-
-    for iter, batch in enumerate(plot_loader):
-        images, annotations, masked_image = batch
-        plot = wandb.Image(masked_image.squeeze().float(), caption="Ground Truth")
-        wandb.log({f"Result{iter}": plot})
-        images = images.to(device)
-        mask = annotations.to(device)
-        if train_supervised:
-            mask = create_binary_masks(mask)
-        result = model(images)
-        loss = best_iou_loss(result[0], mask)
-        plot = torch.argmax(result[0], 0).float()
-        plot = plot / plot.max()
-        plot = wandb.Image(plot, caption="Epoch: -1 " + " Loss: " + str(loss))
-        wandb.log({f"Result{iter}": plot})
-        if iter == n_plots - 1:
-            break
-
-
-    cluster_assignments = get_cluster_assignments(model, train_loader)
-    for epoch in range(n_epochs):
-        train_loss = training_step(model, train_loader, optimizer, best_iou_loss)
-
+    if plot:
         for iter, batch in enumerate(plot_loader):
-            images, annotations, _ = batch
+            images, annotations, masked_image = batch
+            plot = wandb.Image(masked_image.squeeze().float(), caption="Ground Truth")
+            wandb.log({f"Result{iter}": plot})
             images = images.to(device)
             mask = annotations.to(device)
+            if train_supervised:
+                mask = create_binary_masks(mask)
             result = model(images)
             loss = best_iou_loss(result[0], mask)
             plot = torch.argmax(result[0], 0).float()
-            plot = plot/plot.max()
-            plot = wandb.Image(plot, caption="Epoch: " + str(epoch) + " Loss: " + str(loss))
+            plot = plot / plot.max()
+            plot = wandb.Image(plot, caption="Epoch: -1 " + " Loss: " + str(loss))
             wandb.log({f"Result{iter}": plot})
-            if iter == n_plots-1:
+            if iter == n_plots - 1:
                 break
+
+
+    #cluster_assignments = get_cluster_assignments(model, train_loader)
+    for epoch in range(n_epochs):
+        train_loss = training_step(model, train_loader, optimizer, best_iou_loss)
+        if plot:
+            for iter, batch in enumerate(plot_loader):
+                images, annotations, _ = batch
+                images = images.to(device)
+                mask = annotations.to(device)
+                result = model(images)
+                loss = best_iou_loss(result[0], mask)
+                plot = torch.argmax(result[0], 0).float()
+                plot = plot/plot.max()
+                plot = wandb.Image(plot, caption="Epoch: " + str(epoch) + " Loss: " + str(loss))
+                wandb.log({f"Result{iter}": plot})
+                if iter == n_plots-1:
+                    break

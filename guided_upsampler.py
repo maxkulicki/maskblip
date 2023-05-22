@@ -64,12 +64,15 @@ class AttentionUpsample(nn.Module):
         x = self.bn1(x)
         x = torch.relu(x)
         x_size = x.shape[2]
+        batch_size = x.shape[0]
         q, k = torch.split(x, x.shape[1]//2, dim=1)
         v = cluster_features
         #x, _ = self.attention(q, k, v)
-        x, _ = self.attention(q.flatten(2).squeeze().T, k.flatten(2).squeeze().T, v.flatten(2).squeeze().T)
+        def prep(x):
+            return x.flatten(2).squeeze().transpose(-1, -2)
+        x, _ = self.attention(prep(q), prep(k), prep(v))
         x = torch.relu(x)
-        x = torch.reshape(x, (x_size, x_size,-1)).permute(2,0,1).unsqueeze(0)
+        x = torch.reshape(x, (batch_size, x_size, x_size,-1)).permute(0,3,1,2)
         return x
 
 #final convolution

@@ -178,39 +178,43 @@ class MaskBLIP(torch.nn.Module):
             out_clusters = clusters
 
         if self.captioning:
-            # get flattened indices of each cluster
-            cluster_indices = []
-            clusters = torch.argmax(clusters, 3)
-            for i in range(clusters.min(), clusters.max() + 1):
-                cluster_indices.append(torch.where(clusters.flatten() == i))
+            captions_list = []
+            for idx, c in enumerate(clusters):
+                c = c.unsqueeze(0)
+                # get flattened indices of each cluster
+                cluster_indices = []
+                c = torch.argmax(c, 3)
+                for i in range(c.min(), c.max() + 1):
+                    cluster_indices.append(torch.where(c.flatten() == i))
 
-            # slice image_emb using cluster indices
-            cluster_embs = []
-            for i in range(len(cluster_indices)):
-                cluster_embs.append(image_emb.squeeze()[cluster_indices[i]])
+                # slice image_emb using cluster indices
+                cluster_embs = []
+                for i in range(len(cluster_indices)):
+                    cluster_embs.append(image_emb[idx].squeeze()[cluster_indices[i]])
 
-            for emb in cluster_embs:
-                #emb = emb.mean(axis=0)
-                if self.captioning_adapter is not None:
-                    emb = emb + self.captioning_adapter(emb)
-                # generate caption for each cluster
-                decoder_out = self.BLIPcap.text_decoder.generate_from_encoder(
-                    tokenized_prompt=self.prompt,
-                    visual_embeds=emb.clone().detach().unsqueeze(0),
-                    sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
-                    pad_token_id=self.BLIPcap.tokenizer.pad_token_id,
-                    use_nucleus_sampling=True,
-                    num_beams=3,
-                    max_length=15,
-                    min_length=3,
-                    top_p=0.9,
-                    repetition_penalty=1.0,
-                )
-                outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
-                caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
-                captions.append(caption[0])
+                for emb in cluster_embs:
+                    #emb = emb.mean(axis=0)
+                    if self.captioning_adapter is not None:
+                        emb = emb + self.captioning_adapter(emb)
+                    # generate caption for each cluster
+                    decoder_out = self.BLIPcap.text_decoder.generate_from_encoder(
+                        tokenized_prompt=self.prompt,
+                        visual_embeds=emb.clone().detach().unsqueeze(0),
+                        sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
+                        pad_token_id=self.BLIPcap.tokenizer.pad_token_id,
+                        use_nucleus_sampling=True,
+                        num_beams=3,
+                        max_length=15,
+                        min_length=3,
+                        top_p=0.9,
+                        repetition_penalty=1.0,
+                    )
+                    outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
+                    caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
+                    captions.append(caption[0])
+                captions_list.append(captions)
 
-            return out_clusters.squeeze(), captions
+            return out_clusters.squeeze(), captions_list
 
         else:
             return out_clusters.squeeze()
