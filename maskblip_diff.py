@@ -10,6 +10,7 @@ from lavis.models.vit import Attention
 from prompt_learner import CoOp
 from upsampler import Upsampler
 from guided_upsampler import GuidedUpsampler
+from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 
 class CaptionAdapter(nn.Module):
     def __init__(self, device, embed_dim=768):
@@ -236,11 +237,17 @@ if __name__ == "__main__":
 
     print("model loaded")
 
-    image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
+    preprocess = Compose([
+        Resize(size=(256, 256)),
+        ToTensor(),
+        Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
+    ])
+
+    image = preprocess(raw_image).unsqueeze(0).to(device)
     compactness = 0.01
     n_clusters = 4
     n_iter = 10
-    merging_threshold = None#0.999
+    merging_threshold = None
     model.clustering_model = SSNClusteringModel(device, n_clusters=n_clusters, n_iter=n_iter, compactness=compactness, merging_threshold=merging_threshold)
 
     clusters, captions = model.forward(image)

@@ -40,8 +40,8 @@ class ClusteringModel(nn.Module):
     def merge_clusters(self, clusters, embs):
         cluster_sizes = []
         cluster_embs = []
-        clusters = torch.unsqueeze(clusters, 2)
-        for i in range(torch.max(clusters)):
+        clusters = torch.argmax(clusters, -1)
+        for i in range(torch.max(clusters) + 1):
             mask = np.broadcast_to(clusters == i, embs.shape)
             size = np.count_nonzero(mask)
             avg_embedding = np.mean(np.ma.masked_array(embs, mask), axis=(1, 2))
@@ -83,7 +83,7 @@ class SSNClusteringModel(ClusteringModel):
         super().__init__(device, n_clusters, n_iter, compactness)
         self.merging_threshold = merging_threshold
         self.init_data = json.load(open('centroid_data.dict', 'r'))
-    def forward(self, image_emb, training=False, parameters=None):
+    def forward(self, image_emb, training=False, parameters=None, img_size=16):
         batch_size = image_emb.shape[0]
         if parameters is not None:
             n_clusters, n_iter, compactness = parameters
@@ -92,13 +92,13 @@ class SSNClusteringModel(ClusteringModel):
             n_iter = torch.full((batch_size,), self.n_iter).to(self.device)
             compactness = torch.full((batch_size,), self.compactness).to(self.device)
 
-        x_pos = torch.linspace(0, 23, 24).expand(24, 24).flatten().to(
+        x_pos = torch.linspace(0, img_size-1, img_size).expand(img_size, img_size).flatten().to(
             self.device) * compactness.view(-1,1)
-        y_pos = torch.linspace(0, 23, 24).expand(24, 24).T.flatten().to(
+        y_pos = torch.linspace(0, img_size-1, img_size).expand(img_size,img_size).T.flatten().to(
             self.device) * compactness.view(-1,1)
         image_emb_with_spatial = torch.cat(
             (x_pos.unsqueeze(2), y_pos.unsqueeze(2), image_emb), dim=2)
-        grid_image_emb = image_emb_with_spatial.unflatten(1, (24, 24))
+        grid_image_emb = image_emb_with_spatial.unflatten(1, (img_size,img_size))
         grid_image_emb[:, 0, :, :] = grid_image_emb[:, 0, :, :]
         grid_image_emb[:, 1, :, :] = grid_image_emb[:, 1, :, :]
         clusters = ssn(grid_image_emb, n_clusters, n_iter, self.init_data, training=training)

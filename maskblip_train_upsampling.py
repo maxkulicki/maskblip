@@ -42,30 +42,54 @@ def consistency_loss(soft_partition, hard_partition, background_importance=0.1):
     return - avg_result / len(soft_partition)
 
 def create_binary_masks(tensor):
-    unique_values = tensor.unique()
-    num_masks = unique_values.size(0)
+    if len(tensor.shape)>2:
+        binary_masks=[]
+        for t in tensor:
+            unique_values = t.unique()
+            num_masks = unique_values.size(0)
+            binary_mask = torch.zeros((num_masks,) + t.shape, dtype=torch.uint8, device=tensor.device)
+            for i, value in enumerate(unique_values):
+                binary_mask[i] = (t == value).to(torch.uint8)
+            binary_masks.append(binary_mask)
+        binary_masks = torch.cat(binary_masks, dim=0)
+    else:
+        unique_values = tensor.unique()
+        num_masks = unique_values.size(0)
 
-    binary_masks = torch.zeros((num_masks,) + tensor.shape[1:], dtype=torch.uint8, device=tensor.device)
-    for i, value in enumerate(unique_values):
-        binary_masks[i] = (tensor == value).to(torch.uint8)
-
+        binary_mask = torch.zeros((num_masks,) + tensor.shape[1:], dtype=torch.uint8, device=tensor.device)
+        for i, value in enumerate(unique_values):
+            binary_mask[i] = (tensor == value).to(torch.uint8)
+        binary_masks = binary_mask
     return binary_masks
 
 
-def best_iou_loss(pred, target):
+def best_iou_loss(pred, target, cluster_assignment=None):
     if len(target.shape)>3:
         target = target.squeeze()
+
     miou = 0
-    for mask in target:
-        intersection = torch.sum(pred * mask, (1,2))
-        union = torch.sum(pred, (1,2)) + torch.sum(mask) - intersection
-        best_iou = torch.max(intersection/union)
-        if best_iou > 1:
-            print("wtf")
-            print(best_iou)
-        miou += best_iou
+    if cluster_assignment is not None:
+        for i, mask in enumerate(target):
+            intersection = torch.sum(pred[cluster_assignment[i]] * mask)
+            union = torch.sum(pred[cluster_assignment[i]]) + torch.sum(mask) - intersection
+            iou = intersection / union
+            if iou > 1:
+                print("wtf")
+                print(iou)
+            miou += iou
+    else:
+        for mask in target:
+            intersection = torch.sum(pred * mask, (1, 2))
+            union = torch.sum(pred, (1, 2)) + torch.sum(mask) - intersection
+            best_iou = torch.max(intersection / union)
+            if best_iou > 1:
+                print("wtf")
+                print(best_iou)
+            miou += best_iou
 
     return -miou/len(target)
+
+
 
 def soft_dice_loss(y_true, y_pred, epsilon=1e-6):
     '''
@@ -87,7 +111,7 @@ def soft_dice_loss(y_true, y_pred, epsilon=1e-6):
     return loss
 
 
-def training_step(model, loader, optimizer, loss_function):
+def training_step(model, loader, optimizer, loss_function, cluster_assignments=None):
     for iter, batch in enumerate(loader):
         optimizer.zero_grad(set_to_none=True)
 
@@ -103,12 +127,16 @@ def training_step(model, loader, optimizer, loss_function):
                 for m in mask:
                     m = create_binary_masks(m.unsqueeze(0))
                     masks.append(m)
-                masks = torch.cat(masks, dim=0)
+                #masks = torch.cat(masks, dim=0)
             else:
                 masks = create_binary_masks(mask)
         loss = 0
-        for m in masks:
-            loss += loss_function(output[0], m)
+        if cluster_assignments is not None:
+            loss += loss_function(output[0], masks, cluster_assignments[iter])
+        else:
+            for i, m in enumerate(masks):
+                loss += loss_function(output[0][i], m)
+        loss = loss/len(masks)
         #loss = loss_function(output[0], masks)
         loss.backward(retain_graph=True)
         optimizer.step()
@@ -117,13 +145,20 @@ def training_step(model, loader, optimizer, loss_function):
 
     return loss.item()
 
-def get_cluster_assignments(model, data_loader):
+def get_cluster_assignments(model, data_loader, shuffle=False):
     cluster_assignments = []
     for iter, batch in enumerate(data_loader):
         images, annotations, _ = batch
+        if train_supervised:
+            annotations = create_binary_masks(annotations)
         images = images.to(device)
+        annotations = annotations.to(device)
         output = model(images)
-        #FINISH THIS
+        assignment=[]
+        for mask in annotations:
+            closest_cluster = torch.argmax(torch.sum(mask * output[0], axis=(1,2)))
+            assignment.append(closest_cluster.item())
+        cluster_assignments.append(assignment)
     return cluster_assignments
 
 
@@ -131,14 +166,14 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 10
-    batch_size = 5
-    n_epochs = 3
-    lr = 0.0005
+    n_samples = 1000
+    batch_size = 1
+    n_epochs = 10
+    lr = 0.001
     weight_decay = 0
-    plot = False
-    n_plots = 4
-    wandb_track = False
+    plot = True
+    n_plots = 8
+    wandb_track = True
     train_supervised = True
 
     device = ("cuda" if torch.cuda.is_available() else "cpu")
@@ -181,7 +216,7 @@ if __name__ == "__main__":
     train_loader = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=batch_size,
-        shuffle=True
+        shuffle=False
     )
     val_loader = torch.utils.data.DataLoader(
         dataset=val_set,
@@ -197,7 +232,8 @@ if __name__ == "__main__":
         )
 
     best_val_loss = np.infty
-
+    cluster_assignments = get_cluster_assignments(model, train_loader)
+    print(cluster_assignments)
     # with torch.no_grad():
     #     val_loss, best_model, best_val_loss = validation_step(model, val_loader, -1, loss_function, best_val_loss,
     #                                                           best_model, parameter_selector)
@@ -221,10 +257,8 @@ if __name__ == "__main__":
             if iter == n_plots - 1:
                 break
 
-
-    #cluster_assignments = get_cluster_assignments(model, train_loader)
     for epoch in range(n_epochs):
-        train_loss = training_step(model, train_loader, optimizer, best_iou_loss)
+        train_loss = training_step(model, train_loader, optimizer, best_iou_loss, cluster_assignments=cluster_assignments)
         if plot:
             for iter, batch in enumerate(plot_loader):
                 images, annotations, _ = batch
