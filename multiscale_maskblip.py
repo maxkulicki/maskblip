@@ -12,6 +12,112 @@ from scipy.optimize import linear_sum_assignment
 from crfseg import CRF
 import cv2
 
+class MultiscaleMaskBLIP(torch.nn.Module):
+    def __init__(self, device, text_encoder=None):
+        super().__init__()
+        model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
+        model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
+                                                 is_eval=True, device=device)
+        model.tokenizer = model2.tokenizer
+        model.to(device)
+        del (model2)
+
+        self.device = device
+        self.BLIPcap = model
+        self.captioning = True
+        self.text_encoder = text_encoder
+        self.prompt = self.init_prompt()
+        self.vis_processors = vis_processors
+        self.txt_processors = txt_processors
+        self.crf = CRF(n_spatial_dims=2)
+        self.scales = [384, 512, 640]
+        self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
+
+    def init_prompt(self):
+        prompt = [self.BLIPcap.prompt]
+        # prompt_text = "A one-word summary of this image: "
+        # prompt = [prompt_text]
+        prompt = self.BLIPcap.tokenizer(prompt, return_tensors="pt").to(self.device)
+        prompt.input_ids[:, 0] = self.BLIPcap.tokenizer.bos_token_id
+        prompt.input_ids = prompt.input_ids[:, :-1]
+        return prompt
+    def forward(self, raw_image, plot=False):
+        captions = []
+        clusterings = []
+        max_emb_size = max(self.scales) // 16
+        for img_size in self.scales:
+            emb_size = img_size // 16
+
+            p_enc_2d = PositionalEncoding2D(img_size)
+
+            self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
+                interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
+            # preprocess = Compose([
+            #     Resize(size=(img_size, img_size)),  # replace NEW_WIDTH, NEW_HEIGHT with desired dimensions
+            #     ToTensor(),
+            #     Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
+            # ])
+
+            image = Resize(size=(img_size, img_size))(raw_image).to(self.device)
+            embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
+            embs = embs.reshape(1, emb_size, emb_size, -1)
+            p_enc = p_enc_2d(embs)
+            embs = torch.cat([embs, p_enc], dim=-1)
+            c, num_clust, req_c = FINCH(embs.view(-1, embs.shape[-1]).cpu().detach().numpy(), verbose=False)
+
+            for i, n in enumerate(num_clust):
+                #maximum number of clusters
+                if n <= 10:
+                    clusters = c[:, i].reshape(emb_size, emb_size)
+                    clusters = resize(clusters, (max_emb_size, max_emb_size))
+                    clusterings.append(clusters)
+                    if plot:
+                        plt.imshow(clusters)
+                        plt.title(f"Image size: {img_size}, aligned")
+                        plt.show()
+        aligned_clusterings = align_clusterings(clusterings)
+        prob_map = create_probability_map(aligned_clusterings)
+        final_clusters = self.crf(torch.tensor(np.transpose(prob_map, (2,0,1))).unsqueeze(0))
+        if self.captioning:
+            image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
+            captions_list = []
+            for idx, c in enumerate(final_clusters):
+                c = c.unsqueeze(0)
+                c = torch.argmax(c, 1)
+                # get flattened indices of each cluster
+                cluster_indices = []
+
+                for i in torch.unique(c):
+                    cluster_indices.append(torch.where(c.flatten() == i))
+
+                # slice image_emb using cluster indices
+                cluster_embs = []
+                for i in range(len(cluster_indices)):
+                    cluster_embs.append(image_emb[idx].squeeze()[cluster_indices[i]])
+
+                for emb in cluster_embs:
+                    #emb = emb.mean(axis=0)
+                    decoder_out = self.BLIPcap.text_decoder.generate_from_encoder(
+                        tokenized_prompt=self.prompt,
+                        visual_embeds=emb.clone().detach().unsqueeze(0),
+                        sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
+                        pad_token_id=self.BLIPcap.tokenizer.pad_token_id,
+                        use_nucleus_sampling=True,
+                        num_beams=3,
+                        max_length=15,
+                        min_length=3,
+                        top_p=0.9,
+                        repetition_penalty=1.0,
+                    )
+                    outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
+                    caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
+                    captions.append(caption[0])
+                captions_list.append(captions)
+
+            return torch.argmax(final_clusters.squeeze(), dim=0), captions_list
+
+        else:
+            return torch.argmax(final_clusters.squeeze(), dim=0)
 
 def resize(clusters, new_shape):
     # OpenCV uses width x height instead of height x width, so reverse the dimensions
@@ -54,42 +160,6 @@ def align_clusterings(clusterings):
         aligned_clusterings.append(aligned_clustering)
 
     return aligned_clusterings
-
-
-# def compute_cost(cluster1, cluster2):
-#     centroid1 = np.mean(cluster1, axis=0)
-#     centroid2 = np.mean(cluster2, axis=0)
-#     return np.linalg.norm(centroid1 - centroid2)
-#
-# def align_clusterings(clusterings):
-#     # Find the reference clustering (the one with the most clusters)
-#     ref_clustering_idx = np.argmax([len(clustering) for clustering in clusterings])
-#     ref_clustering = clusterings[ref_clustering_idx]
-#
-#     # Align each clustering to the reference clustering
-#     aligned_clusterings = []
-#     for i, clustering in enumerate(clusterings):
-#         if i == ref_clustering_idx:
-#             aligned_clusterings.append(clustering)  # No need to align the reference clustering
-#             continue
-#
-#         # Compute the cost matrix
-#         cost_matrix = np.zeros((len(ref_clustering), len(clustering)))
-#         for i, ref_cluster in enumerate(ref_clustering):
-#             for j, cluster in enumerate(clustering):
-#                 cost_matrix[i, j] = compute_cost(ref_cluster, cluster)
-#
-#         # Apply the Hungarian algorithm to find the best alignment
-#         row_ind, col_ind = linear_sum_assignment(cost_matrix)
-#
-#         # Create the aligned clustering
-#         aligned_clustering = [None]*len(clustering)
-#         for old_idx, new_idx in enumerate(col_ind):
-#             aligned_clustering[new_idx] = clustering[old_idx]
-#
-#         aligned_clusterings.append(aligned_clustering)
-#
-#     return aligned_clusterings
 
 def interpolate_pos_encoding(pos_embed, emb_size):
     # Assuming pos_embed is of shape (1, npatch + 1, dim)
@@ -136,62 +206,75 @@ def create_probability_map(clusterings, epsilon=1e-6):
 
 
 if __name__ == "__main__":
-    img_path = "images/batman.jpg"
+    img_path = "images/img4.jpg"
     raw_image = Image.open(img_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
+    device = 'cpu'#torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = MultiscaleMaskBLIP(device)
     print("model loaded")
-    clusterings = []
-    img_sizes = [384, 448, 512, 576, 640]
-    max_emb_size = max(img_sizes) // 16
-    for img_size in img_sizes:
-        emb_size = img_size // 16
+    clusters, captions = model(raw_image)
+    clusters = clusters.detach().cpu().numpy()
 
-        p_enc_2d = PositionalEncoding2D(700)
+    print(captions)
 
-        model.visual_encoder.pos_embed = nn.Parameter(interpolate_pos_encoding(model.visual_encoder.pos_embed, emb_size))
-        preprocess = Compose([
-            Resize(size=(img_size, img_size)),  # replace NEW_WIDTH, NEW_HEIGHT with desired dimensions
-            ToTensor(),
-            Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
-        ])
+    unique_clusters = np.unique(clusters)
+    cmap = plt.cm.get_cmap('tab20', len(unique_clusters))  # 'tab20' is a good colormap for categorical data
+    # Create a plot with a colorbar that has labels
+    fig, axs = plt.subplots(1, 2, figsize=(25, 7))  # 1 row, 2 columns
+    # The first subplot will display your raw image
 
-        image = preprocess(raw_image).unsqueeze(0).to(device)
-        embs = model.forward_encoder({"image": image})[:, :-1, :]
-        embs = embs.reshape(1, emb_size, emb_size, -1)
-        p_enc = p_enc_2d(embs)
-        embs = torch.cat([embs, p_enc], dim=-1)
-        c, num_clust, req_c = FINCH(embs.view(-1, embs.shape[-1]).cpu().detach().numpy())
-
-        clusters = c[:,-1].reshape(emb_size, emb_size)
-
-        clusterings.append(resize(clusters, (max_emb_size, max_emb_size)))
-    aligned_clusterings = align_clusterings(clusterings)
-    print("clusterings aligned")
-
-    for img_size, clusters in zip(img_sizes, aligned_clusterings):
-        plt.imshow(clusters)
-        plt.title(f"Image size: {img_size}, aligned")
-        plt.show()
-
-    prob_map = create_probability_map(aligned_clusterings)
-    print("probability map created")
-    crf_model = CRF(n_spatial_dims=2)
-    output = crf_model(torch.tensor(np.transpose(prob_map, (2,0,1))).unsqueeze(0))
-    fig, ax = plt.subplots(1, 2)
-    ax[0].imshow(raw_image)
-    ax[0].title.set_text("Original image")
-    ax[1].imshow(torch.argmax(output.squeeze(),0).numpy())
-    ax[1].title.set_text("CRF applied")
+    cax = axs[0].imshow(clusters)
+    axs[0].set_title('Segmentation')
+    # This creates a colorbar for the segmentation plot
+    cbar = fig.colorbar(cax, ax=axs[0], ticks=unique_clusters, spacing='proportional')
+    # This sets the labels of the colorbar to correspond to your captions
+    cbar.ax.set_yticklabels(captions[0])  # change fontsize and rotation as necessary
+    axs[1].imshow(raw_image)
+    axs[1].set_title('Raw Image')
+    # Show the plot
     plt.show()
 
 
 
-
-
-
-
-
-
-
+    # clusterings = []
+    # img_sizes = [384, 448, 512, 576, 640]
+    # max_emb_size = max(img_sizes) // 16
+    # for img_size in img_sizes:
+    #     emb_size = img_size // 16
+    #
+    #     p_enc_2d = PositionalEncoding2D(700)
+    #
+    #     model.visual_encoder.pos_embed = nn.Parameter(interpolate_pos_encoding(model.visual_encoder.pos_embed, emb_size))
+    #     preprocess = Compose([
+    #         Resize(size=(img_size, img_size)),  # replace NEW_WIDTH, NEW_HEIGHT with desired dimensions
+    #         ToTensor(),
+    #         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
+    #     ])
+    #
+    #     image = preprocess(raw_image).unsqueeze(0).to(device)
+    #     embs = model.forward_encoder({"image": image})[:, :-1, :]
+    #     embs = embs.reshape(1, emb_size, emb_size, -1)
+    #     p_enc = p_enc_2d(embs)
+    #     embs = torch.cat([embs, p_enc], dim=-1)
+    #     c, num_clust, req_c = FINCH(embs.view(-1, embs.shape[-1]).cpu().detach().numpy())
+    #
+    #     clusters = c[:,-1].reshape(emb_size, emb_size)
+    #
+    #     clusterings.append(resize(clusters, (max_emb_size, max_emb_size)))
+    # aligned_clusterings = align_clusterings(clusterings)
+    # print("clusterings aligned")
+    #
+    # for img_size, clusters in zip(img_sizes, aligned_clusterings):
+    #     plt.imshow(clusters)
+    #     plt.title(f"Image size: {img_size}, aligned")
+    #     plt.show()
+    #
+    # prob_map = create_probability_map(aligned_clusterings)
+    # print("probability map created")
+    # crf_model = CRF(n_spatial_dims=2)
+    # output = crf_model(torch.tensor(np.transpose(prob_map, (2,0,1))).unsqueeze(0))
+    # fig, ax = plt.subplots(1, 2)
+    # ax[0].imshow(raw_image)
+    # ax[0].title.set_text("Original image")
+    # ax[1].imshow(torch.argmax(output.squeeze(),0).numpy())
+    # ax[1].title.set_text("CRF applied")
+    # plt.show()

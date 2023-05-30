@@ -12,7 +12,6 @@ import torch
 from lavis.models import load_model_and_preprocess
 from nltk.stem import WordNetLemmatizer
 from nlp import get_noun_chunks, load_spacy, find_matching_labels
-# adapt from https://github.com/CSAILVision/placeschallenge/blob/master/sceneparsing/evaluationCode/utils_eval.py
 
 def synset_match(nouns, synset):
     for noun in nouns:
