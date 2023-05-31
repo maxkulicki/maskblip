@@ -14,6 +14,7 @@ from torch.nn import functional as F
 from scipy.stats import mode
 from skimage.util import view_as_windows
 from tqdm import tqdm
+import cv2
 
 def majority_filter(image, size):
     # Create a sliding window view of the image
@@ -84,9 +85,9 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 500
+    n_samples = 20
     batch_size = 1
-    plot = False
+    plot = True
     wandb_track = False
     supervised = True
 
@@ -133,10 +134,10 @@ if __name__ == "__main__":
         batch_size=batch_size,
         shuffle=False
     )
-    total_mIoU = 0
-    total_clean_mIoU = 0
+    mIoU_list = []
+    clean_mIoU_list = []
     for batch in tqdm(train_loader):
-        images, annotations, _ = batch
+        images, annotations = batch
         images.requires_grad = True
         images = images.to(device)
         mask = annotations.to(device)
@@ -144,22 +145,25 @@ if __name__ == "__main__":
             output, captions = model(images)
         else:
             output = model(images)
-        mIoU = compute_best_mean_IoU(mask, output)
-        total_mIoU += mIoU
+
+        resized_output = F.interpolate(output.unsqueeze(0).unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest")
+        mIoU = compute_best_mean_IoU(mask, resized_output)
+        mIoU_list.append(mIoU.item())
         print("mIoU: {}".format(mIoU.item()))
 
         output = output.detach().numpy()
         cleaned_output = apply_recursive_majority_filter(output)
-        clean_mIoU = compute_best_mean_IoU(mask, torch.tensor(cleaned_output))
-        total_clean_mIoU += clean_mIoU
+        resized_cleaned_output = F.interpolate(torch.tensor(cleaned_output).unsqueeze(0).unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest")
+        clean_mIoU = compute_best_mean_IoU(mask, resized_cleaned_output)
+        clean_mIoU_list.append(clean_mIoU.item())
 
         if plot:
-            fig, ax = plt.subplots(1, 4, figsize=(20, 5))
+            fig, ax = plt.subplots(1, 4, figsize=(23, 5))
             ax[0].imshow(images.detach().squeeze().permute(1,2,0).numpy())
             ax[0].title.set_text("Original image")
-            ax[1].imshow(output)
+            ax[1].imshow(resized_output.squeeze().numpy())
             ax[1].title.set_text(f"mIoU: {mIoU.item():.3f}")
-            ax[2].imshow(cleaned_output)
+            ax[2].imshow(resized_cleaned_output.squeeze().numpy())
             ax[2].title.set_text(f"cleaned mIoU: {clean_mIoU.item():.3f}")
             ax[3].imshow(mask.squeeze().numpy())
             ax[3].title.set_text("Ground truth")
@@ -168,5 +172,11 @@ if __name__ == "__main__":
             images.to("cuda")
             xdecoder_output = segment_image(xdecoder_model, images, captions[0], plot=True)
 
-    print("Average mIoU: {}".format(total_mIoU / len(train_loader)))
-    print("Average cleaned mIoU: {}".format(total_clean_mIoU / len(train_loader)))
+    print("Average mIoU: {}".format(sum(mIoU_list) / len(train_loader)))
+    print("Average cleaned mIoU: {}".format(sum(clean_mIoU_list) / len(train_loader)))
+    num_bins = 20
+    fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)
+    # We can set the number of bins with the `bins` argument
+    axs[0].hist(mIoU_list, bins=num_bins, edgecolor='black')
+    axs[1].hist(clean_mIoU_list, bins=num_bins, edgecolor='black')
+    plt.show()

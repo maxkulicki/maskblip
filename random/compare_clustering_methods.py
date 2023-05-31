@@ -52,7 +52,7 @@ def merge_clusters(clusters, embs, threshold=0.995):
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-raw_image = Image.open("images/img3.jpg").convert("RGB")
+raw_image = Image.open("../images/img3.jpg").convert("RGB")
 
 # loads BLIP caption base model, with finetuned checkpoints on MSCOCO captioning dataset.
 # this also loads the associated image processors

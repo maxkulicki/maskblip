@@ -36,5 +36,5 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
     model = MaskBLIP(model, device, upsampler=True)
-    image_dir = "datasets/VOC2012/JPEGImages"
+    image_dir = "../datasets/VOC2012/JPEGImages"
     blip_kmeans(model, image_dir, vis_processors)

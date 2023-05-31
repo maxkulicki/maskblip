@@ -4,11 +4,8 @@ import torch.nn as nn
 from diff_slic.model import SSNClusteringModel, SlicClusteringModel
 from PIL import Image
 from matplotlib import pyplot as plt
-import cv2
 import torch.nn.functional as F
 from lavis.models.vit import Attention
-from prompt_learner import CoOp
-from upsampler import Upsampler
 from guided_upsampler import GuidedUpsampler
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 
@@ -221,12 +218,11 @@ class MaskBLIP(torch.nn.Module):
             return out_clusters.squeeze()
 
 if __name__ == "__main__":
-    img_path = "images/cat.jpg"
+    img_path = "images/img2.jpg"
     raw_image = Image.open(img_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
-    #model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="caption_coco_opt2.7b", is_eval=True, device=device)
     model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
                                                                       is_eval=True, device=device)
     model = MaskBLIP(model, device, text_encoder=model2.text_encoder, upsampler=True)

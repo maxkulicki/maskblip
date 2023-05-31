@@ -13,7 +13,7 @@ from crfseg import CRF
 import cv2
 
 class MultiscaleMaskBLIP(torch.nn.Module):
-    def __init__(self, device, text_encoder=None):
+    def __init__(self, device, scales=[384, 512, 640]):
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
         model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
@@ -25,7 +25,6 @@ class MultiscaleMaskBLIP(torch.nn.Module):
         self.device = device
         self.BLIPcap = model
         self.captioning = True
-        self.text_encoder = text_encoder
         self.prompt = self.init_prompt()
         self.vis_processors = vis_processors
         self.txt_processors = txt_processors
@@ -58,7 +57,7 @@ class MultiscaleMaskBLIP(torch.nn.Module):
             #     Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
             # ])
 
-            image = Resize(size=(img_size, img_size))(raw_image).to(self.device)
+            image = Resize(size=(img_size, img_size), antialias=True)(raw_image).to(self.device)
             embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
             embs = embs.reshape(1, emb_size, emb_size, -1)
             p_enc = p_enc_2d(embs)
