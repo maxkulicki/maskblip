@@ -2,7 +2,6 @@ from lavis.models import load_model_and_preprocess
 from PIL import Image
 from matplotlib import pyplot as plt
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize
-from finch import FINCH
 from positional_encodings.torch_encodings import PositionalEncoding2D
 import torch
 import torch.nn as nn
@@ -13,9 +12,16 @@ from crfseg import CRF
 import cv2
 from skimage.util import view_as_windows
 from scipy.stats import mode
+import torch_kmeans
+import wandb
 
-class MultiscaleMaskBLIP(torch.nn.Module):
-    def __init__(self, device, scales=[384, 512, 640]):
+
+def print_cuda_memory():
+    print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1024 ** 2} MB")
+
+
+class MultiscaleMaskBLIPK(torch.nn.Module):
+    def __init__(self, device, scales=[384, 512, 640], cluster_range=(3, 6)):
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
         model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
@@ -34,7 +40,7 @@ class MultiscaleMaskBLIP(torch.nn.Module):
         self.scales = scales
         self.img_size = max(self.scales)
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
-
+        self.cluster_range = cluster_range
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
         # prompt_text = "A one-word summary of this image: "
@@ -43,49 +49,50 @@ class MultiscaleMaskBLIP(torch.nn.Module):
         prompt.input_ids[:, 0] = self.BLIPcap.tokenizer.bos_token_id
         prompt.input_ids = prompt.input_ids[:, :-1]
         return prompt
-    def forward(self, raw_image, plot=False):
-        captions = []
+    def forward(self, raw_image, cluster_range=(3, 6), gt_mask=None):
         clusterings = []
         max_emb_size = max(self.scales) // 16
-        for img_size in self.scales:
-            emb_size = img_size // 16
+        if gt_mask is None:
+            for img_size in self.scales:
+                emb_size = img_size // 16
 
-            p_enc_2d = PositionalEncoding2D(img_size)
+                p_enc_2d = PositionalEncoding2D(img_size)
 
-            self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
-                interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
-            # preprocess = Compose([
-            #     Resize(size=(img_size, img_size)),  # replace NEW_WIDTH, NEW_HEIGHT with desired dimensions
-            #     ToTensor(),
-            #     Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
-            # ])
+                self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
+                    interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
 
-            image = Resize(size=(img_size, img_size), antialias=True)(raw_image).to(self.device)
-            embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-            embs = embs.reshape(1, emb_size, emb_size, -1)
-            p_enc = p_enc_2d(embs)
-            embs = torch.cat([embs, p_enc], dim=-1)
-            c, num_clust, req_c = FINCH(embs.view(-1, embs.shape[-1]).cpu().detach().numpy(), verbose=False)
-            for i, n in enumerate(num_clust):
-                #maximum number of clusters
-                if n <= 10:
-                    clusters = c[:, i].reshape(emb_size, emb_size)
-                    clusters = resize(clusters, (max_emb_size, max_emb_size))
-                    clusterings.append(clusters)
-                    if plot:
-                        plt.imshow(clusters)
-                        plt.title(f"Image size: {img_size}, aligned")
-                        plt.show()
-        aligned_clusterings = align_clusterings(clusterings)
-        prob_map = create_probability_map(aligned_clusterings)
-        final_clusters = self.crf(torch.tensor(np.transpose(prob_map, (2,0,1))).unsqueeze(0))
-        if self.captioning:
+                image = Resize(size=(img_size, img_size), antialias=True)(raw_image).to(self.device)
+                embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
+                embs = embs.reshape(1, emb_size, emb_size, -1)
+                p_enc = p_enc_2d(embs)
+                embs = torch.cat([embs, p_enc], dim=-1)
+                for n_clust in cluster_range:
+                    kmeans = torch_kmeans.KMeans(n_clusters=n_clust)
+                    result = kmeans(embs.flatten(1,2)).labels
+                    result_np = result.reshape(emb_size, emb_size).cpu().numpy()
+                    result_np = resize(result_np, (max_emb_size, max_emb_size))
+                    clusterings.append(result_np)
+                    del result, result_np
+                    torch.cuda.empty_cache()
+
+                del embs, image, p_enc, kmeans
+                torch.cuda.empty_cache()
+                print_cuda_memory()
+
+            aligned_clusterings = align_clusterings(clusterings)
+            prob_map = create_probability_map(aligned_clusterings)
+            final_clusters = self.crf(torch.tensor(np.transpose(prob_map, (2,0,1))).unsqueeze(0))
             final_clusters = torch.argmax(final_clusters, dim=1)
+        else:
+            final_clusters = torch.tensor(gt_mask).unsqueeze(0).to(self.device)
+            Resize(size=(self.img_size, self.img_size), antialias=True)(final_clusters)
+
+        if self.captioning:
             captions_list = self.generate_captions(image, final_clusters)
             return final_clusters, captions_list
 
         else:
-            return torch.argmax(final_clusters, dim=1)
+            return final_clusters
 
     def generate_captions(self, image, clusters):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
@@ -240,16 +247,35 @@ def create_probability_map(clusterings, epsilon=1e-6):
 
 
 if __name__ == "__main__":
-    img_path = "images/napoleon.jpg"
+    wandb_track = False
+
+    img_path = "images/animals.png"
     raw_image = Image.open(img_path)
     transform = Compose([
         ToTensor(),
         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
     ])
     raw_image = transform(raw_image).unsqueeze(0)
+    scales = [384, 448, 512, 576, 640]
+    cluster_range = range(3,8)
     device = 'cpu'#torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MultiscaleMaskBLIP(device, scales=[384, 448, 512, 576, 640])
+
+    if wandb_track:
+        run = wandb.init(
+            # Set the project where this run will be logged
+            project="maskblip",
+            group="multiscale",
+            # Track hyperparameters and run metadata
+            config={
+                "scales": scales
+            })
+    else:
+        run = wandb.init(mode = "disabled")
+
+
+    model = MultiscaleMaskBLIPK(device, scales=scales, cluster_range=cluster_range)
     model.captioning = False
+
     print("model loaded")
     clusters = model(raw_image)
     clusters = clusters.detach().cpu().numpy()

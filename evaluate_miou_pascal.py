@@ -5,42 +5,19 @@ from lavis.models import load_model_and_preprocess
 from segmentation_dataset import SegmentationDataset
 from cutler_dataset import CutlerDataset
 import wandb
-from multiscale_maskblip import MultiscaleMaskBLIP
+#from multiscale_maskblip import MultiscaleMaskBLIP, clean_clusters
+from multiscale_maskblip_kmeans import MultiscaleMaskBLIPK, clean_clusters
 import matplotlib.pyplot as plt
 from xdecoder_semseg import load_xdecoder_model, segment_image
 from scipy import ndimage
 import numpy as np
 from torch.nn import functional as F
-from scipy.stats import mode
-from skimage.util import view_as_windows
 from tqdm import tqdm
 import cv2
+from torchvision.transforms import Compose, ToTensor, Normalize
 
-def majority_filter(image, size):
-    # Create a sliding window view of the image
-    shape = (size, size)
-    windowed_image = view_as_windows(image, shape)
 
-    # Compute the mode in each window
-    modes, _ = mode(windowed_image.reshape(-1, size * size), axis=1)
-    modes = modes.reshape(image.shape[0] - size + 1, image.shape[1] - size + 1)
 
-    # Pad modes to match the original image size
-    pad_width = size // 2
-    modes = np.pad(modes, pad_width, mode='edge')
-
-    return modes
-
-def apply_recursive_majority_filter(image, footprint_size=3):
-    # Apply majority filter recursively until convergence
-    for i in range(20):
-        new_image = majority_filter(image, footprint_size)
-        mask = np.abs(image - new_image) > 1e-5  # Tolerance for floating point errors
-        if not np.any(mask):
-            break
-        image = new_image
-    print("Number of iterations: {}".format(i + 1))
-    return image
 
 def compute_best_mean_IoU(ground_truth, prediction):
 
@@ -85,20 +62,22 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 20
+    n_samples = 500
     batch_size = 1
-    plot = True
+    plot = False
     wandb_track = False
     supervised = True
 
-    device = 'cpu'#("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = MultiscaleMaskBLIP(device)
-    model.captioning = False
+    device = ("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
+    model = MultiscaleMaskBLIPK(device)
+    captioning = False
+    model.captioning = captioning
     use_xdecoder = False
 
     if use_xdecoder:
         xdecoder_model = load_xdecoder_model("cuda")
+
 
     if wandb_track:
         run = wandb.init(
@@ -112,12 +91,17 @@ if __name__ == "__main__":
             })
     else:
         run = wandb.init(mode = "disabled")
+
+    transform = Compose([
+    ToTensor(),
+    Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
+])
     if supervised:
         dataset_dir = os.path.join("datasets", "VOC2012")
-        dataset = SegmentationDataset(dataset_dir, n_samples, transform=model.vis_processors["eval"], img_size=model.output_size)
+        dataset = SegmentationDataset(dataset_dir, n_samples, transform=transform, img_size=model.output_size)
     else:
         dataset_dir = os.path.join("cutler", "maskcut")
-        dataset = CutlerDataset(dataset_dir, n_samples, transform=model.vis_processors["eval"], img_size=model.output_size)
+        dataset = CutlerDataset(dataset_dir, n_samples, transform=transform, img_size=model.output_size)
 
     proportions = [.9, .1]
     lengths = [int(p * len(dataset)) for p in proportions]
@@ -143,19 +127,31 @@ if __name__ == "__main__":
         mask = annotations.to(device)
         if model.captioning:
             output, captions = model(images)
+            print(captions)
         else:
             output = model(images)
 
-        resized_output = F.interpolate(output.unsqueeze(0).unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest")
+        resized_output = F.interpolate(output.unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest").to(device)
         mIoU = compute_best_mean_IoU(mask, resized_output)
         mIoU_list.append(mIoU.item())
         print("mIoU: {}".format(mIoU.item()))
 
         output = output.detach().numpy()
-        cleaned_output = apply_recursive_majority_filter(output)
-        resized_cleaned_output = F.interpolate(torch.tensor(cleaned_output).unsqueeze(0).unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest")
-        clean_mIoU = compute_best_mean_IoU(mask, resized_cleaned_output)
-        clean_mIoU_list.append(clean_mIoU.item())
+        cleaned_output = clean_clusters(output)
+        if captioning:
+            clean_captions = model.generate_captions(images, torch.tensor(cleaned_output).unsqueeze(0))
+            print(clean_captions)
+
+        try:
+            resized_cleaned_output = F.interpolate(torch.tensor(cleaned_output).unsqueeze(0).unsqueeze(0).float(),
+                                                   size=mask.shape[-2:], mode="nearest").to(device)
+            clean_mIoU = compute_best_mean_IoU(mask, resized_cleaned_output)
+            clean_mIoU_list.append(clean_mIoU.item())
+        except Exception as e:
+            print(f"reesized clean error")
+            print(f"Error details: {e}")
+            continue
+
 
         if plot:
             fig, ax = plt.subplots(1, 4, figsize=(23, 5))
@@ -180,3 +176,4 @@ if __name__ == "__main__":
     axs[0].hist(mIoU_list, bins=num_bins, edgecolor='black')
     axs[1].hist(clean_mIoU_list, bins=num_bins, edgecolor='black')
     plt.show()
+    plt.savefig("mIoU_hist.png")

@@ -4,15 +4,8 @@ import numpy as np
 from sklearn import metrics
 import scipy.sparse as sp
 import warnings
-
-try:
-    from pynndescent import NNDescent
-
-    pynndescent_available = True
-except Exception as e:
-    warnings.warn('pynndescent not installed: {}'.format(e))
-    pynndescent_available = False
-    pass
+import torch
+from cc_torch import connected_components
 
 
 def clust_rank(
@@ -20,40 +13,41 @@ def clust_rank(
         use_ann_above_samples,
         initial_rank=None,
         distance='cosine',
-        verbose=False):
+        verbose=False,
+        batch_size=1024):
 
     s = mat.shape[0]
     if initial_rank is not None:
-        orig_dist = np.empty(shape=(1, 1))
-    elif s <= use_ann_above_samples:
-        orig_dist = metrics.pairwise.pairwise_distances(mat, mat, metric=distance)
-        np.fill_diagonal(orig_dist, 1e12)
-        initial_rank = np.argmin(orig_dist, axis=1)
+        orig_dist = torch.empty(size=(1, 1)).to('cuda')  # Move to GPU
     else:
-        if not pynndescent_available:
-            raise MemoryError("You should use pynndescent for inputs larger than {} samples.".format(use_ann_above_samples))
-        if verbose:
-            print('Using PyNNDescent to compute 1st-neighbours at this step ...')
+        # Move mat to GPU
+        mat = mat.to('cuda')
+        # Batchwise computation of pairwise distances
+        orig_dist = torch.zeros((s, s)).to('cuda')
+        for i in range(0, s, batch_size):
+            for j in range(0, s, batch_size):
+                batch1 = mat[i:min(i+batch_size, s)]
+                batch2 = mat[j:min(j+batch_size, s)]
+                dists = torch.cdist(batch1, batch2, p=2) if distance=='euclidean' else 1 - torch.nn.functional.cosine_similarity(batch1, batch2, dim=1)
+                orig_dist[i:min(i+batch_size, s), j:min(j+batch_size, s)] = dists
+        orig_dist.fill_diagonal_(1e12)
+        initial_rank = torch.argmin(orig_dist, dim=1)
+    indices = torch.arange(0, s).to('cuda')
+    values = torch.ones_like(initial_rank).to('cuda')
+    A = torch.sparse_coo_tensor(indices=indices.unsqueeze(0).repeat(2, 1), values=values, size=(s, s)).to_dense()
+    A = A + torch.eye(s, device='cuda')
+    A = torch.mm(A, A.t())
 
-        knn_index = NNDescent(
-            mat,
-            n_neighbors=2,
-            metric=distance,
-        )
-
-        result, orig_dist = knn_index.neighbor_graph
-        initial_rank = result[:, 1]
-        orig_dist[:, 0] = 1e12
-        print('Step PyNNDescent done ...')
-
-    # The Clustering Equation
-    A = sp.csr_matrix((np.ones_like(initial_rank, dtype=np.float32), (np.arange(0, s), initial_rank)), shape=(s, s))
-    A = A + sp.eye(s, dtype=np.float32, format='csr')
-    A = A @ A.T
-
-    A = A.tolil()
-    A.setdiag(0)
+    A = A - torch.diag(A.diag())
     return A, orig_dist
+
+
+def get_clust(a, orig_dist, min_sim=None):
+    if min_sim is not None:
+        a[(orig_dist * a) > min_sim] = 0
+
+    num_clust, u = None, None  # Placeholder values
+    return u, num_clust
 
 
 def get_clust(a, orig_dist, min_sim=None):
