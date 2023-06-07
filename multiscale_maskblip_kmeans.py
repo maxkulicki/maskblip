@@ -1,7 +1,7 @@
 from lavis.models import load_model_and_preprocess
 from PIL import Image
 from matplotlib import pyplot as plt
-from torchvision.transforms import Compose, Resize, ToTensor, Normalize
+from torchvision.transforms import Compose, Resize, ToTensor, Normalize, InterpolationMode
 from positional_encodings.torch_encodings import PositionalEncoding2D
 import torch
 import torch.nn as nn
@@ -21,9 +21,11 @@ def print_cuda_memory():
 
 
 class MultiscaleMaskBLIPK(torch.nn.Module):
-    def __init__(self, device, scales=[384, 512, 640], cluster_range=(3, 6)):
+    def __init__(self, device, scales=[384, 512, 640], cluster_range=(3, 6), smoothness_weight=1, smoothness_theta=1, pos_emb_dim=512):
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
+        #model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="pretrain_opt2.7b", is_eval=True, device=device)
+
         model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
                                                  is_eval=True, device=device)
         model.tokenizer = model2.tokenizer
@@ -36,11 +38,12 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
         self.prompt = self.init_prompt()
         self.vis_processors = vis_processors
         self.txt_processors = txt_processors
-        self.crf = CRF(n_spatial_dims=2)
+        self.crf = CRF(n_spatial_dims=2, smoothness_weight=smoothness_weight, smoothness_theta=smoothness_theta)
         self.scales = scales
         self.img_size = max(self.scales)
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
         self.cluster_range = cluster_range
+        self.pos_emb_dim = pos_emb_dim
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
         # prompt_text = "A one-word summary of this image: "
@@ -49,14 +52,15 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
         prompt.input_ids[:, 0] = self.BLIPcap.tokenizer.bos_token_id
         prompt.input_ids = prompt.input_ids[:, :-1]
         return prompt
-    def forward(self, raw_image, cluster_range=(3, 6), gt_mask=None):
+
+    def forward(self, raw_image, cluster_range=(3, 6), gt_mask=None, clean=False):
         clusterings = []
         max_emb_size = max(self.scales) // 16
         if gt_mask is None:
             for img_size in self.scales:
                 emb_size = img_size // 16
 
-                p_enc_2d = PositionalEncoding2D(img_size)
+                p_enc_2d = PositionalEncoding2D(self.pos_emb_dim)
 
                 self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                     interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
@@ -85,17 +89,22 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
             final_clusters = torch.argmax(final_clusters, dim=1)
         else:
             final_clusters = torch.tensor(gt_mask).unsqueeze(0).to(self.device)
-            Resize(size=(self.img_size, self.img_size), antialias=True)(final_clusters)
+            final_clusters = Resize(size=self.output_size, antialias=True, interpolation=InterpolationMode.NEAREST_EXACT)(final_clusters)
+
+        if clean:
+            final_clusters = torch.tensor(clean_clusters(final_clusters.detach().cpu().numpy())).unsqueeze(0)
 
         if self.captioning:
-            captions_list = self.generate_captions(image, final_clusters)
+            self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
+                interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
+            captions_list = self.generate_captions(raw_image, final_clusters)
             return final_clusters, captions_list
-
         else:
             return final_clusters
 
-    def generate_captions(self, image, clusters):
+    def generate_captions(self, image, clusters, local_attention=False):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
+
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
         captions_list = []
         for idx, c in enumerate(clusters):
@@ -105,12 +114,35 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
             cluster_indices = []
 
             for i in torch.unique(c):
-                cluster_indices.append(torch.where(c.flatten() == i))
+                cluster_indices.append(torch.where(c.flatten() == i)[0].to(self.device))
 
             # slice image_emb using cluster indices
             cluster_embs = []
-            for i in range(len(cluster_indices)):
-                cluster_embs.append(image_emb[idx].squeeze()[cluster_indices[i]])
+
+            if local_attention:
+                pre_attention = self.BLIPcap.visual_encoder.patch_embed(image)
+                B = pre_attention.shape[0]
+                encoder =  self.BLIPcap.visual_encoder
+                for i in range(len(cluster_indices)):
+                    register_blk = -1
+                    x = torch.index_select(pre_attention, 1, cluster_indices[i])
+                    cls_tokens = encoder.cls_token.expand(
+                        B, -1, -1
+                    )  # stole cls_tokens impl from Phil Wang, thanks
+                    x = torch.cat((cls_tokens, x), dim=1)
+
+                    x = x + encoder.pos_embed[:, : x.size(1), :]
+                    x = encoder.pos_drop(x)
+
+                    for j, blk in enumerate(encoder.blocks):
+                        x = blk(x, register_blk == j)
+                    x = encoder.norm(x).squeeze()
+                    global_attention_emb = image_emb[idx].squeeze()[cluster_indices[i]]
+                    x = torch.concat((x, global_attention_emb),0)
+                    cluster_embs.append(x)
+            else:
+                for i in range(len(cluster_indices)):
+                    cluster_embs.append(image_emb[idx].squeeze()[cluster_indices[i]])
 
             for emb in cluster_embs:
                 # emb = emb.mean(axis=0)
@@ -151,7 +183,7 @@ def majority_filter(image, size):
 
 def clean_clusters(image, footprint_size=3):
     # Apply majority filter recursively until convergence
-    for i in range(10):
+    for i in range(5):
         new_image = majority_filter(image.squeeze(), footprint_size)
         mask = np.abs(image - new_image) > 1e-5  # Tolerance for floating point errors
         if not np.any(mask):
@@ -249,15 +281,21 @@ def create_probability_map(clusterings, epsilon=1e-6):
 if __name__ == "__main__":
     wandb_track = False
 
-    img_path = "images/animals.png"
+    img_path = "images/eiffel.jpg"
     raw_image = Image.open(img_path)
     transform = Compose([
         ToTensor(),
         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
     ])
     raw_image = transform(raw_image).unsqueeze(0)
-    scales = [384, 448, 512, 576, 640]
-    cluster_range = range(3,8)
+
+    # Parameters from best parameter sweep
+    scales = [384, 512]
+    cluster_range = range(2,8)
+    smoothness_theta = 0.8
+    smoothness_weight = 6.26
+    pos_emb_dim = 256
+    cleanup = True
     device = 'cpu'#torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if wandb_track:
@@ -273,14 +311,10 @@ if __name__ == "__main__":
         run = wandb.init(mode = "disabled")
 
 
-    model = MultiscaleMaskBLIPK(device, scales=scales, cluster_range=cluster_range)
-    model.captioning = False
+    model = MultiscaleMaskBLIPK(device, scales=scales, cluster_range=cluster_range, smoothness_theta=smoothness_theta, smoothness_weight=smoothness_weight, pos_emb_dim=pos_emb_dim)
 
     print("model loaded")
-    clusters = model(raw_image)
-    clusters = clusters.detach().cpu().numpy()
-    clusters = clean_clusters(clusters)
-    captions = model.generate_captions(raw_image, torch.tensor(clusters).unsqueeze(0))
+    clusters, captions = model(raw_image, clean=cleanup)
 
     print(captions)
 
@@ -289,7 +323,6 @@ if __name__ == "__main__":
     # Create a plot with a colorbar that has labels
     fig, axs = plt.subplots(1, 2, figsize=(25, 7))  # 1 row, 2 columns
     # The first subplot will display your raw image
-
     cax = axs[0].imshow(clusters.squeeze())
     axs[0].set_title('Segmentation')
     # This creates a colorbar for the segmentation plot
