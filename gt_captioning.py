@@ -16,6 +16,7 @@ from tqdm import tqdm
 import cv2
 from torchvision.transforms import Compose, ToTensor, Normalize, Resize, InterpolationMode
 from nltk.corpus import wordnet
+import itertools
 
 pascal_classes = [
     ["background", "backdrop", "setting"],
@@ -70,17 +71,16 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 100
+    n_samples = 2912
     batch_size = 1
     plot = False
     supervised = True
-    use_gt_masks = False
-
     device = ("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     model = MultiscaleMaskBLIPK(device, scales=[384, 512])
-    captioning = True
-    model.captioning = captioning
+    model.captioning = True
+
+
 
     transform = Compose([
     ToTensor(),
@@ -93,91 +93,95 @@ if __name__ == "__main__":
         dataset_dir = os.path.join("cutler", "maskcut")
         dataset = CutlerDataset(dataset_dir, n_samples, transform=transform, img_size=model.output_size)
 
-    proportions = [.9, .1]
-    lengths = [int(p * len(dataset)) for p in proportions]
-    lengths[-1] = len(dataset) - sum(lengths[:-1])
-    train_set, val_set = torch.utils.data.random_split(dataset, lengths)
+    use_gt_masks = [False, True]
+    attention_modes = ["global", "local", "concat"]
+    configs = list(itertools.product(use_gt_masks, attention_modes))
 
-    train_loader = torch.utils.data.DataLoader(
-        dataset=train_set,
+    dataloader = torch.utils.data.DataLoader(
+        dataset=dataset,
         batch_size=batch_size,
         shuffle=False
     )
-    val_loader = torch.utils.data.DataLoader(
-        dataset=val_set,
-        batch_size=batch_size,
-        shuffle=False
-    )
-    total_recall = 0
-    for batch in tqdm(train_loader):
-        images, annotations = batch
-        images.requires_grad = True
-        images = images.to(device)
-        mask = annotations.to(device)
-        if use_gt_masks:
-            output, captions = model(images, gt_mask=mask, clean=False)
-        else:
-            output, captions = model(images, clean=True)
-        print(captions)
-        print(len(captions[0]))
-        classes = mask.unique()
-        n_labels=0
-        n_matches=0
-        if len(captions[0]) < 2:
-            continue
+    result_dict = {}
+    for config in configs:
+        use_gt_masks, attention_mode = config
+        total_recall = 0
+        for batch in tqdm(dataloader):
+            images, annotations = batch
+            images.requires_grad = True
+            images = images.to(device)
+            mask = annotations.to(device)
+            if use_gt_masks:
+                output, captions = model(images, gt_mask=mask, clean=False)
+            else:
+                output, captions = model(images, clean=True)
+            print(captions)
+            print(len(captions[0]))
+            classes = mask.unique()
+            n_labels=0
+            n_matches=0
+            if len(captions[0]) < 2:
+                continue
 
-        gt_labels = [pascal_classes[i] for i in classes]
+            gt_labels = [pascal_classes[i] for i in classes]
 
-        if use_gt_masks:
-            for i, caption in enumerate(captions[0]):
-                gt_label = pascal_classes[classes[i]]
-                if "background" not in gt_label:
-                    n_labels += 1
-                    if check_word_in_caption(caption, gt_label):
-                        n_matches += 1
-        else:
-            print(gt_labels)
-            for i, label in enumerate(gt_labels):
-                if "background" not in label:
-                    n_labels += 1
-                    # best cluster only
-                    # matching_caption = find_matching_caption(captions[0], label, output, mask)
-                    # if check_word_in_caption(matching_caption, label):
-                    #     n_matches += 1
-                    #     break
-
-                    # any cluster
-                    for caption in captions[0]:
-                        if check_word_in_caption(caption, label):
+            if use_gt_masks:
+                for i, caption in enumerate(captions[0]):
+                    gt_label = pascal_classes[classes[i]]
+                    if "background" not in gt_label:
+                        n_labels += 1
+                        if check_word_in_caption(caption, gt_label):
                             n_matches += 1
-                            break
+            else:
+                print(gt_labels)
+                for i, label in enumerate(gt_labels):
+                    if "background" not in label:
+                        n_labels += 1
+                        # best cluster only
+                        # matching_caption = find_matching_caption(captions[0], label, output, mask)
+                        # if check_word_in_caption(matching_caption, label):
+                        #     n_matches += 1
+                        #     break
 
-        recall = n_matches / n_labels
-        total_recall += recall
-        print(recall)
+                        # any cluster
+                        for caption in captions[0]:
+                            if check_word_in_caption(caption, label):
+                                n_matches += 1
+                                break
 
-        output = output.cpu().detach().numpy()
+            recall = n_matches / n_labels
+            total_recall += recall
+            print(recall)
 
-        if plot:
-            unique_clusters = np.unique(output)
-            cmap = plt.cm.get_cmap('tab20', len(unique_clusters))  # 'tab20' is a good colormap for categorical data
-            # Create a plot with a colorbar that has labels
-            fig, axs = plt.subplots(1, 2, figsize=(25, 7))  # 1 row, 2 columns
-            # The first subplot will display your raw image
-            cax = axs[0].imshow(output.squeeze())
-            axs[0].set_title('Segmentation')
-            # This creates a colorbar for the segmentation plot
-            cbar = fig.colorbar(cax, ax=axs[0], ticks=unique_clusters, spacing='proportional')
-            # This sets the labels of the colorbar to correspond to your captions
-            cbar.ax.set_yticklabels(captions[0])  # change fontsize and rotation as necessary
+            output = output.cpu().detach().numpy()
 
-            classes = [pascal_classes[i] for i in unique_clusters]
-            axs[1].imshow(images.squeeze().permute(1, 2, 0).detach().numpy())
-            axs[1].set_title(gt_labels)
-            # Show the plot
-            plt.tight_layout()
-            plt.show()
+            if plot:
+                unique_clusters = np.unique(output)
+                cmap = plt.cm.get_cmap('tab20', len(unique_clusters))  # 'tab20' is a good colormap for categorical data
+                # Create a plot with a colorbar that has labels
+                fig, axs = plt.subplots(1, 2, figsize=(25, 7))  # 1 row, 2 columns
+                # The first subplot will display your raw image
+                cax = axs[0].imshow(output.squeeze())
+                axs[0].set_title('Segmentation')
+                # This creates a colorbar for the segmentation plot
+                cbar = fig.colorbar(cax, ax=axs[0], ticks=unique_clusters, spacing='proportional')
+                # This sets the labels of the colorbar to correspond to your captions
+                cbar.ax.set_yticklabels(captions[0])  # change fontsize and rotation as necessary
 
-    avg_recall = total_recall / len(train_loader)
-    print(model.img_size)
-    print("Average recall: ", avg_recall)
+                classes = [pascal_classes[i] for i in unique_clusters]
+                axs[1].imshow(images.squeeze().permute(1, 2, 0).detach().numpy())
+                axs[1].set_title(gt_labels)
+                # Show the plot
+                plt.tight_layout()
+                plt.show()
+
+        avg_recall = total_recall / len(dataloader)
+        result_dict[config] = avg_recall
+        print(model.img_size)
+        print("Attention mode: ", attention_mode)
+        print("Use gt masks: ", use_gt_masks)
+        print("Average recall: ", avg_recall)
+
+    print(result_dict)
+    with open("results.txt", "w") as f:
+        f.write(str(result_dict))

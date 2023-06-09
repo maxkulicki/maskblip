@@ -40,6 +40,7 @@ def segment_image(model, image_ori, classes, plot=False, unknown=True):
 
     t = []
     t.append(transforms.Resize(512, interpolation=Image.BICUBIC))
+    t.append(transforms.ToTensor())
     transform = transforms.Compose(t)
     model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(classes, is_eval=False)
     metadata = MetadataCatalog.get('demo')
@@ -47,19 +48,19 @@ def segment_image(model, image_ori, classes, plot=False, unknown=True):
     model.model.sem_seg_head.num_classes = len(classes)
 
     with torch.no_grad():
-        width = image_ori.size()[-1]
-        height = image_ori.size()[-2]
-        image = transform(image_ori)
-        # image = np.asarray(image)
-        # image_ori = np.asarray(image_ori)
-        #images = torch.from_numpy(image.copy()).permute(2, 0, 1).cuda()
+        width = image_ori.size[-2]
+        height = image_ori.size[-1]
+        #image = transform(image_ori)
+        image = np.asarray(image_ori)
+        #image_ori = np.asarray(image_ori)
+        image = torch.from_numpy(image.copy()).permute(2, 0, 1).cuda()
 
         batch_inputs = [{'image': image.squeeze(), 'height': height, 'width': width}]
         outputs = model.forward(batch_inputs)
         sem_seg = outputs[-1]['sem_seg'].max(0)[1]
         classes_detected = sem_seg.unique()
         classes_detected = [classes[i] for i in classes_detected]
-        sem_seg = sem_seg.cpu().numpy()
+        sem_seg = sem_seg.cpu().numpy().T
     if plot:
         plot_segmentation(image_ori, sem_seg, classes_detected, classes)
     return sem_seg
@@ -69,9 +70,9 @@ def plot_segmentation(image, sem_seg, classes_detected, classes):
     fig, axs = plt.subplots(1, 2, figsize=(20, 10))
     suptitle = "Input labels: " + ','.join(classes)
     fig.suptitle(suptitle, fontsize=20)
-    axs[0].imshow(image.squeeze().detach().cpu().numpy().transpose(1, 2, 0))
+    axs[0].imshow(image)
     axs[0].set_title("Original Image", fontsize=20)
-    cluster_plot = axs[1].imshow(sem_seg)
+    cluster_plot = axs[1].imshow(sem_seg.T)
     axs[1].set_title("Segmented Image", fontsize=20)
     values = np.unique(sem_seg)
     colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]

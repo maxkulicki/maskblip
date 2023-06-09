@@ -49,7 +49,7 @@ def pascal_miou(config):
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 100
+    n_samples = 2912
     batch_size = 1
     device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -107,16 +107,11 @@ sweep_configuration = {
     {
         'kmeans_range': {'values': [3, 4, 5, 6]},
         'pos_emb_dim': {'values': [256, 512, 768, 1024]},
-        'smoothness_weight': {'min': 1.0, 'max': 7.0},
+        'smoothness_weight': {'min': 1.0, 'max': 10.0},
         'smoothness_theta': {'min': 0.5, 'max': 2.0},
         'nr_of_scales': {'values': [2, 3, 4, 5]},
         'scale_step': {'values': [32, 64, 128]}
      }
 }
 
-sweep_id = wandb.sweep(
-    sweep=sweep_configuration,
-    project='maskblip'
-    )
-
-wandb.agent(sweep_id, function=main, count=50)
+wandb.agent("a3k89xw3", function=main, count=20)
