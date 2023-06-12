@@ -4,11 +4,8 @@
 # Licensed under The MIT License [see LICENSE for details]
 # Written by Xueyan Zou (xueyan@cs.wisc.edu)
 # --------------------------------------------------------
-
-import os
 import sys
 import logging
-import yaml
 pth = '/'.join(sys.path[0].split('/')[:-1])
 sys.path.insert(0, pth)
 
@@ -20,7 +17,6 @@ import torch
 from torchvision import transforms
 from XDecoder.utils.arguments import load_opt_from_config_files
 from detectron2.data import MetadataCatalog
-from detectron2.utils.colormap import random_color
 from XDecoder.xdecoder.BaseModel import BaseModel
 from XDecoder.xdecoder import build_model
 import matplotlib.pyplot as plt

@@ -22,7 +22,7 @@ pascal_classes = [
     ["background", "backdrop", "setting"],
     ["aeroplane", "airplane", "plane", "jet", "aircraft"],
     ["bicycle", "bike", "cycle"],
-    ["bird", "avian"],
+    ["bird", "avian", "parrot"],
     ["boat", "ship", "vessel", "yacht"],
     ["bottle", "jar", "container"],
     ["bus", "coach", "minibus"],
@@ -55,7 +55,7 @@ def check_word_in_caption(caption, class_names):
             return True
     return False
 
-def find_matching_caption(captions, class_names, clusters, gt_mask):
+def find_matching_caption(captions, clusters, gt_mask):
     clusters = clusters.to(device)
     gt_mask = gt_mask.to(device)
     most_overlap = 0
@@ -71,11 +71,11 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 2912
+    n_samples = 3
     batch_size = 1
-    plot = False
+    plot = True
     supervised = True
-    device = ("cuda" if torch.cuda.is_available() else "cpu")
+    device = 'cpu'#("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
     model = MultiscaleMaskBLIPK(device, scales=[384, 512])
     model.captioning = True
@@ -93,9 +93,9 @@ if __name__ == "__main__":
         dataset_dir = os.path.join("cutler", "maskcut")
         dataset = CutlerDataset(dataset_dir, n_samples, transform=transform, img_size=model.output_size)
 
-    use_gt_masks = [False, True]
+    eval_mode = ['any_cluster']#["gt_mask", "any_cluster", "best_cluster"]
     attention_modes = ["global", "local", "concat"]
-    configs = list(itertools.product(use_gt_masks, attention_modes))
+    configs = list(itertools.product(eval_mode, attention_modes))
 
     dataloader = torch.utils.data.DataLoader(
         dataset=dataset,
@@ -104,14 +104,15 @@ if __name__ == "__main__":
     )
     result_dict = {}
     for config in configs:
-        use_gt_masks, attention_mode = config
+        print("Evaluating config: ", config)
+        eval_mode, attention_mode = config
         total_recall = 0
         for batch in tqdm(dataloader):
             images, annotations = batch
             images.requires_grad = True
             images = images.to(device)
             mask = annotations.to(device)
-            if use_gt_masks:
+            if eval_mode == "gt_mask":
                 output, captions = model(images, gt_mask=mask, clean=False)
             else:
                 output, captions = model(images, clean=True)
@@ -125,7 +126,7 @@ if __name__ == "__main__":
 
             gt_labels = [pascal_classes[i] for i in classes]
 
-            if use_gt_masks:
+            if eval_mode == "gt_mask":
                 for i, caption in enumerate(captions[0]):
                     gt_label = pascal_classes[classes[i]]
                     if "background" not in gt_label:
@@ -138,16 +139,18 @@ if __name__ == "__main__":
                     if "background" not in label:
                         n_labels += 1
                         # best cluster only
-                        # matching_caption = find_matching_caption(captions[0], label, output, mask)
-                        # if check_word_in_caption(matching_caption, label):
-                        #     n_matches += 1
-                        #     break
-
-                        # any cluster
-                        for caption in captions[0]:
-                            if check_word_in_caption(caption, label):
+                        if eval_mode == "best_cluster":
+                            matching_caption = find_matching_caption(captions[0], label, output, mask)
+                            if check_word_in_caption(matching_caption, label):
                                 n_matches += 1
                                 break
+
+                        # any cluster
+                        elif eval_mode == "any_cluster":
+                            for caption in captions[0]:
+                                if check_word_in_caption(caption, label):
+                                    n_matches += 1
+                                    break
 
             recall = n_matches / n_labels
             total_recall += recall
@@ -179,7 +182,7 @@ if __name__ == "__main__":
         result_dict[config] = avg_recall
         print(model.img_size)
         print("Attention mode: ", attention_mode)
-        print("Use gt masks: ", use_gt_masks)
+        print("Use gt masks: ", eval_mode)
         print("Average recall: ", avg_recall)
 
     print(result_dict)

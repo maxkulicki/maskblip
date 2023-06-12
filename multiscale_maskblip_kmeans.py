@@ -158,11 +158,11 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
                     sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
                     pad_token_id=self.BLIPcap.tokenizer.pad_token_id,
                     use_nucleus_sampling=True,
-                    num_beams=3,
+                    num_beams=5,
                     max_length=15,
                     min_length=3,
                     top_p=0.9,
-                    repetition_penalty=1.0,
+                    repetition_penalty=3.0,
                 )
                 outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
                 caption = [output[len(self.BLIPcap.prompt):] for output in outputs]

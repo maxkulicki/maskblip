@@ -4,7 +4,7 @@
 #SBATCH --cpus-per-task=18
 #SBATCH --gpus=1
 #SBATCH --partition=gpu
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 
 # Load modules for MPI and other parallel libraries
 module load 2022

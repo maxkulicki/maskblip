@@ -12,7 +12,7 @@ from torchvision.transforms import Compose, Resize, ToTensor, Normalize, Interpo
 
 spacy_model = load_spacy()
 
-img_path = "images/flag.jpg"
+img_path = "images/cat.jpg"
 raw_image = Image.open(img_path)
 transform = Compose([
     ToTensor(),
@@ -24,7 +24,7 @@ device2 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = MultiscaleMaskBLIPK(device)
 
-clusters, captions = model.forward(image)
+clusters, captions = model.forward(image, attention_mode="global")
 print("\nCaptions: ")
 for caption in captions:
     print(caption, end=", ")
