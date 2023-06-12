@@ -20,12 +20,11 @@ def print_cuda_memory():
     print(f"CUDA memory allocated: {torch.cuda.memory_allocated() / 1024 ** 2} MB")
 
 
-class MultiscaleMaskBLIPK(torch.nn.Module):
-    def __init__(self, device, scales=[384, 512, 640], cluster_range=(3, 6), smoothness_weight=1, smoothness_theta=1, pos_emb_dim=512):
+class MaskBLIP(torch.nn.Module):
+    def __init__(self, device, scales=[384, 512], cluster_range=(2, 8), smoothness_weight=6, smoothness_theta=0.8, pos_emb_dim=256):
         super().__init__()
-        #model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
-        print("Loading BLIP2 model...")
-        model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="pretrain_opt2.7b", is_eval=True, device=device)
+        model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
+        #model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="pretrain_opt2.7b", is_eval=True, device=device)
 
         model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
                                                  is_eval=True, device=device)
@@ -54,18 +53,7 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
         prompt.input_ids = prompt.input_ids[:, :-1]
         return prompt
 
-    def forward(self, raw_image, cluster_range=(3, 6), gt_mask=None, clean=False):
-        image = self.vis_processors["eval"](raw_image).unsqueeze(0).to(self.device)
-        with self.BLIPcap.maybe_autocast():
-            emb = self.BLIPcap.visual_encoder(image)
-            print(emb.shape)
-            emb = self.BLIPcap.ln_vision(emb)
-            print(emb.shape)
-
-
-        print(image.shape)
-        print(self.BLIPcap.generate({"image": image, "prompt": self.prompt}))
-
+    def forward(self, raw_image, gt_mask=None, clean=False, attention_mode="global"):
         clusterings = []
         max_emb_size = max(self.scales) // 16
         if gt_mask is None:
@@ -76,22 +64,15 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
 
                 self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                     interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
+                self.BLIPcap.visual_encoder.patch_embed.img_size = (img_size, img_size)
 
                 image = Resize(size=(img_size, img_size), antialias=True)(raw_image).to(self.device)
-
-                # samples = {"image": image}
-                # blip2_output = self.BLIPcap(samples)
-
-                #embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-
-                embs = self.BLIPcap.ln_vision(image)
-                print(embs.shape)
-                print(type(embs))
+                embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
                 embs = embs.reshape(1, emb_size, emb_size, -1)
                 p_enc = p_enc_2d(embs)
                 embs = torch.cat([embs, p_enc], dim=-1)
-                for n_clust in cluster_range:
-                    kmeans = torch_kmeans.KMeans(n_clusters=n_clust)
+                for n_clust in self.cluster_range:
+                    kmeans = torch_kmeans.KMeans(n_clusters=n_clust, verbose=False)
                     result = kmeans(embs.flatten(1,2)).labels
                     result_np = result.reshape(emb_size, emb_size).cpu().numpy()
                     result_np = resize(result_np, (max_emb_size, max_emb_size))
@@ -101,7 +82,7 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
 
                 del embs, image, p_enc, kmeans
                 torch.cuda.empty_cache()
-                print_cuda_memory()
+                #print_cuda_memory()
 
             aligned_clusterings = align_clusterings(clusterings)
             prob_map = create_probability_map(aligned_clusterings)
@@ -117,12 +98,12 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
         if self.captioning:
             self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                 interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
-            captions_list = self.generate_captions(raw_image, final_clusters)
+            captions_list = self.generate_captions(raw_image, final_clusters, attention_mode)
             return final_clusters, captions_list
         else:
             return final_clusters
 
-    def generate_captions(self, image, clusters, local_attention=False):
+    def generate_captions(self, image, clusters, attention_mode):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
 
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
@@ -139,7 +120,7 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
             # slice image_emb using cluster indices
             cluster_embs = []
 
-            if local_attention:
+            if attention_mode in ["local", "concat", "cls"]:
                 pre_attention = self.BLIPcap.visual_encoder.patch_embed(image)
                 B = pre_attention.shape[0]
                 encoder =  self.BLIPcap.visual_encoder
@@ -157,9 +138,15 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
                     for j, blk in enumerate(encoder.blocks):
                         x = blk(x, register_blk == j)
                     x = encoder.norm(x).squeeze()
-                    global_attention_emb = image_emb[idx].squeeze()[cluster_indices[i]]
-                    x = torch.concat((x, global_attention_emb),0)
-                    cluster_embs.append(x)
+                    if attention_mode == "local":
+                        cluster_embs.append(x)
+                    elif attention_mode == "concat":
+                        global_attention_emb = image_emb[idx].squeeze()[cluster_indices[i]]
+                        x = torch.concat((x, global_attention_emb),0)
+                        cluster_embs.append(x)
+                    elif attention_mode == "cls":
+                        cluster_embs.append(x[0])
+
             else:
                 for i in range(len(cluster_indices)):
                     cluster_embs.append(image_emb[idx].squeeze()[cluster_indices[i]])
@@ -172,11 +159,11 @@ class MultiscaleMaskBLIPK(torch.nn.Module):
                     sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
                     pad_token_id=self.BLIPcap.tokenizer.pad_token_id,
                     use_nucleus_sampling=True,
-                    num_beams=3,
+                    num_beams=5,
                     max_length=15,
                     min_length=3,
                     top_p=0.9,
-                    repetition_penalty=1.0,
+                    repetition_penalty=3.0,
                 )
                 outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
                 caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
@@ -301,13 +288,13 @@ def create_probability_map(clusterings, epsilon=1e-6):
 if __name__ == "__main__":
     wandb_track = False
 
-    img_path = "images/cat.jpg"
+    img_path = "images/eiffel.jpg"
     raw_image = Image.open(img_path)
     transform = Compose([
         ToTensor(),
         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
     ])
-    #raw_image = transform(raw_image).unsqueeze(0)
+    raw_image = transform(raw_image).unsqueeze(0)
 
     # Parameters from best parameter sweep
     scales = [384, 512]
@@ -316,7 +303,7 @@ if __name__ == "__main__":
     smoothness_weight = 6.26
     pos_emb_dim = 256
     cleanup = True
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = 'cpu'#torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if wandb_track:
         run = wandb.init(
@@ -331,7 +318,7 @@ if __name__ == "__main__":
         run = wandb.init(mode = "disabled")
 
 
-    model = MultiscaleMaskBLIPK(device, scales=scales, cluster_range=cluster_range, smoothness_theta=smoothness_theta, smoothness_weight=smoothness_weight, pos_emb_dim=pos_emb_dim)
+    model = MaskBLIP(device, scales=scales, cluster_range=cluster_range, smoothness_theta=smoothness_theta, smoothness_weight=smoothness_weight, pos_emb_dim=pos_emb_dim)
 
     print("model loaded")
     clusters, captions = model(raw_image, clean=cleanup)

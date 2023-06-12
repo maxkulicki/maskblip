@@ -1,5 +1,5 @@
 from sklearn.cluster import KMeans
-from maskblip_diff import MaskBLIP
+from random.maskblip_diff import MaskBLIP
 from lavis.models import load_model_and_preprocess
 import torch
 import os

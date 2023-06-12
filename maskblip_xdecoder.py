@@ -1,18 +1,14 @@
 import torch
-from lavis.models import load_model_and_preprocess
 from PIL import Image
 from nlp import get_noun_chunks, load_spacy
-import spacy
-import en_core_web_sm
-from xdecoder_semseg import load_xdecoder_model, segment_image, plot_segmentation
-from maskblip_diff import MaskBLIP
-from multiscale_maskblip_kmeans import MultiscaleMaskBLIPK
+from xdecoder_semseg import load_xdecoder_model, segment_image
+from maskblip import MaskBLIP
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-from torchvision.transforms import Compose, Resize, ToTensor, Normalize, InterpolationMode
+from torchvision.transforms import Compose, ToTensor, Normalize
 
 spacy_model = load_spacy()
 
-img_path = "images/cat.jpg"
+img_path = "images/img1.jpg"
 raw_image = Image.open(img_path)
 transform = Compose([
     ToTensor(),
@@ -22,7 +18,7 @@ image = transform(raw_image).unsqueeze(0)
 device = "cpu"
 device2 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-model = MultiscaleMaskBLIPK(device)
+model = MaskBLIP(device)
 
 clusters, captions = model.forward(image, attention_mode="global")
 print("\nCaptions: ")

@@ -1,17 +1,14 @@
 import os
-import sys
 
 from matplotlib import pyplot as plt
 
-from maskblip_diff import MaskBLIP
+from random.maskblip_diff import MaskBLIP
 from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
 from PIL import Image
 import numpy as np
 import torch
 from lavis.models import load_model_and_preprocess
-from nltk.stem import WordNetLemmatizer
-from nlp import get_noun_chunks, load_spacy, find_matching_labels
+
 
 def synset_match(nouns, synset):
     for noun in nouns:

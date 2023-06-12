@@ -1,21 +1,13 @@
 import os
-from maskblip_diff import MaskBLIP
 import torch
-from lavis.models import load_model_and_preprocess
 from segmentation_dataset import SegmentationDataset
 from cutler_dataset import CutlerDataset
-import wandb
 #from multiscale_maskblip import MultiscaleMaskBLIP, clean_clusters
-from multiscale_maskblip_kmeans import MultiscaleMaskBLIPK, clean_clusters
+from maskblip import MaskBLIP
 import matplotlib.pyplot as plt
-from xdecoder_semseg import load_xdecoder_model, segment_image
-from scipy import ndimage
 import numpy as np
-from torch.nn import functional as F
 from tqdm import tqdm
-import cv2
 from torchvision.transforms import Compose, ToTensor, Normalize, Resize, InterpolationMode
-from nltk.corpus import wordnet
 import itertools
 
 pascal_classes = [
@@ -77,7 +69,7 @@ if __name__ == "__main__":
     supervised = True
     device = 'cpu'#("cuda" if torch.cuda.is_available() else "cpu")
     print(device)
-    model = MultiscaleMaskBLIPK(device, scales=[384, 512])
+    model = MaskBLIP(device, scales=[384, 512])
     model.captioning = True
 
 

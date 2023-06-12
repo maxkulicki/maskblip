@@ -240,7 +240,7 @@ def create_probability_map(clusterings, epsilon=1e-6):
 
 
 if __name__ == "__main__":
-    img_path = "images/napoleon.jpg"
+    img_path = "../images/napoleon.jpg"
     raw_image = Image.open(img_path)
     transform = Compose([
         ToTensor(),

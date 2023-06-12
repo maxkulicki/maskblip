@@ -2,7 +2,7 @@ import os
 import torch
 from segmentation_dataset import SegmentationDataset
 import wandb
-from multiscale_maskblip_kmeans import MultiscaleMaskBLIPK
+from maskblip import MaskBLIP
 import numpy as np
 from torch.nn import functional as F
 from tqdm import tqdm
@@ -56,7 +56,7 @@ def pascal_miou(config):
     scales = [384 + config['scale_step'] * i for i in range(config['nr_of_scales'])]
     kmeans_range = range(2, 2 + config['kmeans_range'])
 
-    model = MultiscaleMaskBLIPK(device, scales=scales, cluster_range=kmeans_range, pos_emb_dim=config['pos_emb_dim'], smoothness_weight=config['smoothness_weight'], smoothness_theta=config['smoothness_theta'])
+    model = MaskBLIP(device, scales=scales, cluster_range=kmeans_range, pos_emb_dim=config['pos_emb_dim'], smoothness_weight=config['smoothness_weight'], smoothness_theta=config['smoothness_theta'])
     model.captioning = False
 
     transform = Compose([
