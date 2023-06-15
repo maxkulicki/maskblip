@@ -32,9 +32,10 @@ class SegmentationDataset(Dataset):
         # this should return one sample from the dataset
         image = self.transform(Image.open(self.image_paths[idx]))
         annotation = self.preprocess_VOC_mask(self.annotation_paths[idx])
+        path = self.image_paths[idx]
         #annotation = self.annotations[idx]
         #masked_image = self.masked_images[idx]
-        return image, annotation
+        return image, annotation, path
     def create_color_mapping(self, unique_values):
         num_values = len(unique_values)
         color_mapping = np.zeros((num_values, 3))

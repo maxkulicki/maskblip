@@ -3,12 +3,12 @@ from PIL import Image
 from nlp import get_noun_chunks, load_spacy
 from xdecoder_semseg import load_xdecoder_model, segment_image
 from maskblip import MaskBLIP
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from torchvision.transforms import Compose, ToTensor, Normalize
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 spacy_model = load_spacy()
 
-img_path = "images/img1.jpg"
+img_path = "images/bird.jpg"
 raw_image = Image.open(img_path)
 transform = Compose([
     ToTensor(),
@@ -20,12 +20,11 @@ device2 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = MaskBLIP(device)
 
-clusters, captions = model.forward(image, attention_mode="global")
+clusters, captions = model(image, clean=True)
 print("\nCaptions: ")
 for caption in captions:
     print(caption, end=", ")
 chunks = get_noun_chunks(captions[0], spacy_model)
-#chunks = captions
 print("\nChunks: ")
 for chunk in chunks:
     print(chunk, end=", ")

@@ -14,6 +14,9 @@ from skimage.util import view_as_windows
 from scipy.stats import mode
 import torch_kmeans
 import wandb
+from nlp import get_noun_chunks, load_spacy
+from xdecoder_semseg import load_xdecoder_model, segment_image
+
 
 
 def print_cuda_memory():
@@ -29,6 +32,7 @@ class MaskBLIP(torch.nn.Module):
         model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
                                                  is_eval=True, device=device)
         model.tokenizer = model2.tokenizer
+        model.extract_features = model2.extract_features
         model.to(device)
         del (model2)
 
@@ -44,6 +48,7 @@ class MaskBLIP(torch.nn.Module):
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
         self.cluster_range = cluster_range
         self.pos_emb_dim = pos_emb_dim
+        self.spacy_model = load_spacy()
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
         # prompt_text = "A one-word summary of this image: "
@@ -99,11 +104,14 @@ class MaskBLIP(torch.nn.Module):
             self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                 interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
             captions_list = self.generate_captions(raw_image, final_clusters, attention_mode)
+
+
             return final_clusters, captions_list
+
         else:
             return final_clusters
 
-    def generate_captions(self, image, clusters, attention_mode):
+    def generate_captions(self, image, clusters, attention_mode, filter_captions=False):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
 
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
@@ -168,8 +176,26 @@ class MaskBLIP(torch.nn.Module):
                 outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
                 caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
                 captions.append(caption[0])
+            captions = self.filter_cap(captions, cluster_embs) if filter_captions else captions
             captions_list.append(captions)
+
         return captions_list
+
+    def filter_cap(self, captions, cluster_embs):
+        filtered_captions = []
+        for i, c in enumerate(captions):
+            noun_phrases = get_noun_chunks([c], self.spacy_model)
+            phrase_embs = []
+            for np in noun_phrases:
+                phrase_emb = self.BLIPcap.extract_features({"text_input": [np]}, mode="text").text_embeds[:,0,:]
+                phrase_embs.append(phrase_emb)
+            phrase_embs = torch.stack(phrase_embs).squeeze()
+            cluster_emb = torch.mean(cluster_embs[i], axis=0)
+            cluster_emb = cluster_emb.unsqueeze(0).repeat(phrase_embs.shape[0], 1)
+            cosine_sim = torch.cosine_similarity(phrase_embs, cluster_emb, dim=1)
+            filtered_captions.append(noun_phrases[torch.argmax(cosine_sim)])
+
+        return filtered_captions
 
 
 def majority_filter(image, size):
@@ -284,17 +310,38 @@ def create_probability_map(clusterings, epsilon=1e-6):
 
     return prob_map / np.sum(prob_map, axis=-1, keepdims=True)
 
+def plot_result(image, clusters, captions):
+
+    unique_clusters = np.unique(clusters)
+    cmap = plt.cm.get_cmap('tab20', len(unique_clusters))  # 'tab20' is a good colormap for categorical data
+    # Create a plot with a colorbar that has labels
+    fig, axs = plt.subplots(1, 2, figsize=(25, 7))  # 1 row, 2 columns
+
+    axs[0].imshow(image.squeeze().permute(1, 2, 0))
+    axs[0].set_title('Image')
+    # The first subplot will display your raw image
+    cax = axs[1].imshow(clusters.squeeze())
+    axs[1].set_title('MaskBLIP')
+    # This creates a colorbar for the segmentation plot
+    cbar = fig.colorbar(cax, ax=axs[0], ticks=unique_clusters, spacing='proportional')
+    # This sets the labels of the colorbar to correspond to your captions
+    cbar.ax.set_yticklabels(captions[0])  # change fontsize and rotation as necessary
+
+    # Show the plot
+    plt.tight_layout()
+    plt.show()
+
 
 if __name__ == "__main__":
     wandb_track = False
 
-    img_path = "images/eiffel.jpg"
+    img_path = "images/boats.jpg"
     raw_image = Image.open(img_path)
     transform = Compose([
         ToTensor(),
         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
     ])
-    raw_image = transform(raw_image).unsqueeze(0)
+    image = transform(raw_image).unsqueeze(0)
 
     # Parameters from best parameter sweep
     scales = [384, 512]
@@ -321,23 +368,15 @@ if __name__ == "__main__":
     model = MaskBLIP(device, scales=scales, cluster_range=cluster_range, smoothness_theta=smoothness_theta, smoothness_weight=smoothness_weight, pos_emb_dim=pos_emb_dim)
 
     print("model loaded")
-    clusters, captions = model(raw_image, clean=cleanup)
+    clusters, captions = model(image, clean=cleanup)
 
     print(captions)
 
-    unique_clusters = np.unique(clusters)
-    cmap = plt.cm.get_cmap('tab20', len(unique_clusters))  # 'tab20' is a good colormap for categorical data
-    # Create a plot with a colorbar that has labels
-    fig, axs = plt.subplots(1, 2, figsize=(25, 7))  # 1 row, 2 columns
-    # The first subplot will display your raw image
-    cax = axs[0].imshow(clusters.squeeze())
-    axs[0].set_title('Segmentation')
-    # This creates a colorbar for the segmentation plot
-    cbar = fig.colorbar(cax, ax=axs[0], ticks=unique_clusters, spacing='proportional')
-    # This sets the labels of the colorbar to correspond to your captions
-    cbar.ax.set_yticklabels(captions[0])  # change fontsize and rotation as necessary
-    axs[1].imshow(raw_image.squeeze().permute(1, 2, 0))
-    axs[1].set_title('Raw Image')
-    # Show the plot
-    plt.tight_layout()
-    plt.show()
+    plot_result(image, clusters, captions)
+
+    chunks = get_noun_chunks(captions[0], model.spacy_model)
+    del model, clusters, captions
+    torch.cuda.empty_cache()
+
+    xdecoder_model = load_xdecoder_model("cuda")
+    xdecoder_segments = segment_image(xdecoder_model, raw_image, chunks, plot=True)

@@ -48,7 +48,8 @@ def get_noun_chunks(captions, spacy_model):
         chunks = remove_articles(chunks)
         all_chunks += chunks
     all_chunks = filter_substrings(all_chunks)
-    return all_chunks
+    filtered_chunks = [s for s in all_chunks if 'background' not in s]
+    return filtered_chunks
 
 
 def find_matching_labels(chunks, labels, model=None, background=False):
