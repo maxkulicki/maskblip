@@ -14,9 +14,9 @@ from skimage.util import view_as_windows
 from scipy.stats import mode
 import torch_kmeans
 import wandb
-from nlp import get_noun_chunks, load_spacy
+from nlp import get_noun_chunks
 from xdecoder_semseg import load_xdecoder_model, segment_image
-
+import spacy
 
 
 def print_cuda_memory():
@@ -48,7 +48,7 @@ class MaskBLIP(torch.nn.Module):
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
         self.cluster_range = cluster_range
         self.pos_emb_dim = pos_emb_dim
-        self.spacy_model = load_spacy()
+        self.spacy_model = spacy.load("en_core_web_sm")
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
         # prompt_text = "A one-word summary of this image: "

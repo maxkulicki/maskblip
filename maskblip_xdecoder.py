@@ -1,13 +1,13 @@
 import torch
 from PIL import Image
-from nlp import get_noun_chunks, load_spacy
+import spacy
+from nlp import get_noun_chunks
 from xdecoder_semseg import load_xdecoder_model, segment_image
 from maskblip import MaskBLIP
 from torchvision.transforms import Compose, ToTensor, Normalize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-spacy_model = load_spacy()
-
+spacy_model = spacy.load("en_core_web_sm")
 img_path = "images/bird.jpg"
 raw_image = Image.open(img_path)
 transform = Compose([

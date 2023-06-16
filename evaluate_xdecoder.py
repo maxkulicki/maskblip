@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from tqdm import tqdm
 from torchvision.transforms import Compose, ToTensor, Normalize
 from xdecoder_semseg import load_xdecoder_model, segment_image
-from nlp import get_noun_chunks, load_spacy
+from nlp import get_noun_chunks
 from PIL import Image
 
 def segment_with_sanity_check(xdecoder_model, images, captions, max_threshold=0.95, min_threshold=0.01, min_captions=3, plot=False, device='cuda:0'):
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     # torch.manual_seed(0)
     # np.random.seed(0)
 
-    n_samples = 1
+    n_samples = 10
     batch_size = 1
     plot = True
     wandb_track = False
@@ -194,7 +194,7 @@ if __name__ == "__main__":
 
     print("Average mIoU: {}".format(sum(mIoU_list) / len(data_loader)))
     num_bins = 20
-    fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)
+    fig, axs = plt.subplots(1, 1, sharey=True, tight_layout=True)
     # We can set the number of bins with the `bins` argument
     axs[0].hist(mIoU_list, bins=num_bins, edgecolor='black')
     plt.show()
