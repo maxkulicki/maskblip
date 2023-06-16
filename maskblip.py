@@ -103,7 +103,7 @@ class MaskBLIP(torch.nn.Module):
         if self.captioning:
             self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                 interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
-            captions_list = self.generate_captions(raw_image, final_clusters, attention_mode)
+            captions_list = self.generate_captions(raw_image, final_clusters, attention_mode=attention_mode)
 
 
             return final_clusters, captions_list
@@ -111,7 +111,7 @@ class MaskBLIP(torch.nn.Module):
         else:
             return final_clusters
 
-    def generate_captions(self, image, clusters, attention_mode, filter_captions=False):
+    def generate_captions(self, image, clusters, attention_mode='global', filter_captions=False):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
 
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]

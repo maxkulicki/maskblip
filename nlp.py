@@ -37,7 +37,7 @@ def load_spacy():
     nlp = spacy.load('en_core_web_sm')
     #nlp = en_core_web_sm.load()
     return nlp
-def get_noun_chunks(captions, spacy_model):
+def get_noun_chunks(captions, spacy_model, include_background=True):
     all_chunks = []
     for cap in captions:
         cap = remove_repeated_words(cap)
@@ -46,8 +46,9 @@ def get_noun_chunks(captions, spacy_model):
         chunks = remove_articles(chunks)
         all_chunks += chunks
     all_chunks = filter_substrings(all_chunks)
-    filtered_chunks = [s for s in all_chunks if 'background' not in s]
-    return filtered_chunks
+    if include_background:
+        all_chunks += ['background']
+    return all_chunks
 
 
 # def find_matching_labels(chunks, labels, model=None, background=False):
