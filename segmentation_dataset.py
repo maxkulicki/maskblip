@@ -7,35 +7,32 @@ from scipy.stats import mode
 import matplotlib.pyplot as plt
 
 class SegmentationDataset(Dataset):
-    def __init__(self, dataset_dir, n_samples=None, transform=None, img_size=(24, 24)):
+    def __init__(self, dataset_dir, transform=None, img_size=(24, 24)):
         self.img_size = img_size
         self.transform = transform
-        with open(os.path.join(dataset_dir, "ImageSets", "Segmentation", "train.txt")) as file:
+        with open(os.path.join(dataset_dir, "ImageSets", "Segmentation", "val.txt")) as file:
             imageIDs = [line.rstrip() for line in file]
+        self.image_paths = [os.path.join(dataset_dir, "JPEGImages", filename) + ".jpg" for filename in imageIDs]
+        self.annotation_paths = [os.path.join(dataset_dir, "SegmentationClass", filename) + ".png" for filename in imageIDs]
 
-        if n_samples is None:
-            n_samples = len(imageIDs)
-
-        self.image_paths = [os.path.join(dataset_dir, "JPEGImages", filename) + ".jpg" for filename in
-                       imageIDs[:n_samples]]
-        self.annotation_paths = [os.path.join(dataset_dir, "SegmentationClass", filename) + ".png" for
-                             filename in imageIDs[:n_samples]]
-        #self.images = [transform(Image.open(image_path)) for image_path in image_paths]
-        #self.annotations = [self.preprocess_VOC_mask(annotation_path) for annotation_path in annotations_paths]
-        #self.masked_images = [self.get_masked_image(image, annotation) for image, annotation in zip(self.images, annotations_paths)]
-        #self.annotations = [torch.tensor(np.asarray(Image.open(annotation_path).resize((24, 24), Image.NEAREST))) for annotation_path in annotations_paths]
     def __len__(self):
         # this should return the size of the dataset
         return len(self.image_paths)
 
     def __getitem__(self, idx):
-        # this should return one sample from the dataset
-        image = self.transform(Image.open(self.image_paths[idx]))
-        annotation = self.preprocess_VOC_mask(self.annotation_paths[idx])
         path = self.image_paths[idx]
-        #annotation = self.annotations[idx]
-        #masked_image = self.masked_images[idx]
+
+        # this should return one sample from the dataset
+        try:
+            image = self.transform(Image.open(self.image_paths[idx]))
+        except:
+            image = torch.tensor([1,1,1])
+        try:
+            annotation = self.preprocess_VOC_mask(self.annotation_paths[idx])
+        except:
+            annotation = torch.tensor([1,1,1])
         return image, annotation, path
+
     def create_color_mapping(self, unique_values):
         num_values = len(unique_values)
         color_mapping = np.zeros((num_values, 3))

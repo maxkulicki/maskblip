@@ -27,7 +27,6 @@ class MaskBLIP(torch.nn.Module):
     def __init__(self, device, scales=[384, 512], cluster_range=(2, 8), smoothness_weight=6, smoothness_theta=0.8, pos_emb_dim=256):
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
-        #model, vis_processors, txt_processors = load_model_and_preprocess(name="blip2_opt", model_type="pretrain_opt2.7b", is_eval=True, device=device)
 
         model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
                                                  is_eval=True, device=device)
@@ -42,13 +41,14 @@ class MaskBLIP(torch.nn.Module):
         self.prompt = self.init_prompt()
         self.vis_processors = vis_processors
         self.txt_processors = txt_processors
-        self.crf = CRF(n_spatial_dims=2, smoothness_weight=smoothness_weight, smoothness_theta=smoothness_theta)
+        self.crf = CRF(n_spatial_dims=2, requires_grad=False, smoothness_weight=smoothness_weight, smoothness_theta=smoothness_theta)
         self.scales = scales
         self.img_size = max(self.scales)
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
         self.cluster_range = cluster_range
         self.pos_emb_dim = pos_emb_dim
         self.spacy_model = spacy.load("en_core_web_sm")
+
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
         # prompt_text = "A one-word summary of this image: "
@@ -100,24 +100,23 @@ class MaskBLIP(torch.nn.Module):
         if clean:
             final_clusters = torch.tensor(clean_clusters(final_clusters.detach().cpu().numpy())).unsqueeze(0)
 
+        # To generate a caption with the clustering
         if self.captioning:
             self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                 interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
             captions_list = self.generate_captions(raw_image, final_clusters, attention_mode=attention_mode)
-
-
             return final_clusters, captions_list
-
         else:
             return final_clusters
 
+    # Get captions from already generated clusters, useful to generate multiple captions from the same cluster
     def generate_captions(self, image, clusters, attention_mode='global', filter_captions=False):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
 
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
         captions_list = []
         for idx, c in enumerate(clusters):
-            captions=[]
+            captions = []
             c = c.unsqueeze(0)
             # get flattened indices of each cluster
             cluster_indices = []
@@ -131,7 +130,7 @@ class MaskBLIP(torch.nn.Module):
             if attention_mode in ["local", "concat", "cls"]:
                 pre_attention = self.BLIPcap.visual_encoder.patch_embed(image)
                 B = pre_attention.shape[0]
-                encoder =  self.BLIPcap.visual_encoder
+                encoder = self.BLIPcap.visual_encoder
                 for i in range(len(cluster_indices)):
                     register_blk = -1
                     x = torch.index_select(pre_attention, 1, cluster_indices[i])
@@ -222,7 +221,7 @@ def clean_clusters(image, footprint_size=3):
         if not np.any(mask):
             break
         image = new_image
-    print("Number of iterations: {}".format(i + 1))
+    # print("Number of iterations: {}".format(i + 1))
     return image
 
 def resize(clusters, new_shape):
