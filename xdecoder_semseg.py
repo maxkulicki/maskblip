@@ -63,18 +63,25 @@ def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
     return sem_seg
 
 
-def plot_segmentation(image, sem_seg, classes_detected, classes):
-    fig, axs = plt.subplots(1, 2, figsize=(20, 10))
+def plot_segmentation(image, sem_seg, classes_detected, classes, gt, mIoU=None):
+    fig, axs = plt.subplots(1, 3, figsize=(30, 10))
     suptitle = "Input labels: " + ','.join(classes)
     fig.suptitle(suptitle, fontsize=20)
     axs[0].imshow(image)
     axs[0].set_title("Original Image", fontsize=20)
-    cluster_plot = axs[1].imshow(sem_seg.T)
-    axs[1].set_title("Segmented Image", fontsize=20)
+    axs[1].imshow(gt)
+    axs[1].set_title("Ground Truth", fontsize=20)
+    cluster_plot = axs[2].imshow(sem_seg)
+    axs[2].set_title("Segmented Image", fontsize=20)
     values = np.unique(sem_seg)
     colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
     # create a patch (proxy artist) for every color
     patches = [ mpatches.Patch(color=colors[i], label=classes_detected[i] ) for i in range(len(values)) ]
     # put those patched as legend-handles into the legend
     plt.legend(handles=patches)
+
+
+    if mIoU is not None:
+        plt.suptitle("mIoU: {:.2f}".format(mIoU), fontsize=20)
     plt.show()
+    return fig

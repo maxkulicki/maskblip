@@ -9,7 +9,7 @@ import numpy as np
 from torch.nn import functional as F
 from tqdm import tqdm
 from torchvision.transforms import Compose, ToTensor, Normalize, PILToTensor
-from xdecoder_semseg import load_xdecoder_model, segment_image
+from xdecoder_semseg import load_xdecoder_model, segment_image, plot_segmentation
 from nlp import get_noun_chunks
 from PIL import Image
 import json
@@ -154,16 +154,11 @@ if __name__ == "__main__":
         print("mIoU: {}".format(mIoU.item()))
 
         if mIoU < 0.4:
-            fig, ax = plt.subplots(1, 3)
-            ax[0].imshow(image)
-            ax[1].imshow(output.squeeze().cpu().numpy())
-            ax[1].title.set_text("mIoU: {}".format(mIoU.item()))
-            ax[2].imshow(mask.squeeze().cpu().numpy())
-            ax[2].title.set_text("gt")
-            plt.suptitle(noun_phrases)
-            plt.savefig("bad_results_xdecoder/{}_xdecoder.png".format(i))
-            plt.show()
-            bad_mIoU_captions[i] = noun_phrases
+            output = output.squeeze().cpu().numpy()
+            mask = mask.squeeze().cpu().numpy()
+            classes_detected = [noun_phrases[i] for i in np.unique(output)]
+            fig = plot_segmentation(image, output, noun_phrases, classes_detected, mask, mIoU=mIoU.item())
+            fig.savefig("bad_results_xdecoder/{}.png".format(i))
 
     print("Average mIoU: {}".format(sum(mIoU_list) / len(mIoU_list)))
     num_bins = 20
