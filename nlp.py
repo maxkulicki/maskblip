@@ -45,11 +45,30 @@ def get_noun_chunks(captions, spacy_model, include_background=True):
         chunks = [str(chunk) for chunk in doc.noun_chunks]
         chunks = remove_articles(chunks)
         all_chunks += chunks
-    all_chunks = filter_substrings(all_chunks)
+
+    #all_chunks = break_down_chunks(all_chunks, spacy_model)
+    #all_chunks = filter_substrings(all_chunks)
     if include_background:
         all_chunks += ['background']
+
+    all_chunks = list(set(all_chunks))
     return all_chunks
 
+def break_down_chunks(chunks, nlp):
+    new_list = []
+    for string in chunks:
+        words = string.split()
+        # check if a string has more than 3 words
+        if len(words) > 3:
+            # process the string with spacy
+            doc = nlp(string)
+            # check which words are nouns and add them to the new list
+            for token in doc:
+                if token.pos_ == 'NOUN':
+                    new_list.append(token.text)
+        else:
+            new_list.append(string)
+    return new_list
 
 # def find_matching_labels(chunks, labels, model=None, background=False):
     # if background:

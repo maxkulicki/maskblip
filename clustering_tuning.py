@@ -49,7 +49,6 @@ def pascal_miou(config):
     torch.manual_seed(0)
     np.random.seed(0)
 
-    n_samples = 2912
     batch_size = 1
     device = ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -64,7 +63,7 @@ def pascal_miou(config):
         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
     ])
     dataset_dir = os.path.join("datasets", "VOC2012")
-    dataset = SegmentationDataset(dataset_dir, n_samples, transform=transform, img_size=model.output_size)
+    dataset = SegmentationDataset(dataset_dir, transform=transform, img_size=model.output_size)
 
     dataloader = torch.utils.data.DataLoader(
         dataset=dataset,
@@ -74,7 +73,7 @@ def pascal_miou(config):
 
     mIoU_list = []
     for batch in tqdm(dataloader):
-        images, annotations = batch
+        images, annotations, _ = batch
         images = images.to(device)
         mask = annotations.to(device)
         if model.captioning:
@@ -114,4 +113,6 @@ sweep_configuration = {
      }
 }
 
-wandb.agent("a3k89xw3", function=main, count=20)
+wandb.agent("a3k89xw3", function=main, count=20, project="maskblip")
+# if __name__ == '__main__':
+#     score = pascal_miou(sweep_configuration['parameters'])
