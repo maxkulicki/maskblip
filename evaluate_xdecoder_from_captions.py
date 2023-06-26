@@ -10,7 +10,7 @@ from torch.nn import functional as F
 from tqdm import tqdm
 from torchvision.transforms import Compose, ToTensor, Normalize, PILToTensor
 from xdecoder_semseg import load_xdecoder_model, segment_image, plot_segmentation
-from nlp import get_noun_chunks
+from nlp import get_noun_chunks, get_nouns, load_spacy
 from PIL import Image
 import json
 from scipy.stats import mode
@@ -41,10 +41,10 @@ def preprocess_VOC_mask(annotation_path):
     return torch.tensor(mask)
 def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshold=0.95, min_threshold=0.01, min_captions=3, plot=False, device='cuda:0'):
     output = torch.tensor(
-        segment_image(xdecoder_model, images, noun_phrases, plot=plot)).T.unsqueeze(0).to(device)
+        segment_image(xdecoder_model, images, noun_phrases, plot=plot)).unsqueeze(0).to(device)
 
     while len(noun_phrases) >= min_captions:
-        class_counts = torch.bincount(output.view(-1))
+        class_counts = torch.bincount(output.contiguous().view(-1))
 
         total_pixels = float(output.numel())
 
@@ -63,7 +63,7 @@ def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshol
             # If no classes to remove, stop and return the output
             return output
 
-        output = torch.tensor(segment_image(xdecoder_model, images, noun_phrases, plot=False)).T.unsqueeze(0).to(device)
+        output = torch.tensor(segment_image(xdecoder_model, images, noun_phrases, plot=False)).unsqueeze(0).to(device)
 
     # If we reached here, it means there are less than min_captions left,
     # so just return the last resized_output we got
@@ -112,13 +112,13 @@ if __name__ == "__main__":
     # torch.manual_seed(0)
     # np.random.seed(0)
 
-    n_samples = 10
     batch_size = 1
     plot = True
     wandb_track = False
-    supervised = True
+    use_nouns_only = True
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    spacy_model = load_spacy()
     xdecoder_model = load_xdecoder_model(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
 
@@ -130,7 +130,6 @@ if __name__ == "__main__":
             # Track hyperparameters and run metadata
             config={
                 "batch_size": batch_size,
-                "n_samples": n_samples,
             })
     else:
         run = wandb.init(mode = "disabled")
@@ -146,19 +145,23 @@ if __name__ == "__main__":
         mask_path = f"../datasets/VOCdevkit/VOC2012/SegmentationClass/{path}".replace(".jpg", ".png")
         mask = preprocess_VOC_mask(mask_path).to(device)
         noun_phrases = data[path]
+        if use_nouns_only:
+            noun_phrases = get_nouns(noun_phrases, load_spacy())
+            noun_phrases.append("background")
 
+        print(noun_phrases)
         output = segment_with_sanity_check(xdecoder_model, image, noun_phrases, device=device, plot=False)
         transform = PILToTensor()
         mIoU = compute_best_mean_IoU(mask, output)
         mIoU_list.append(mIoU.item())
         print("mIoU: {}".format(mIoU.item()))
 
-        if mIoU < 0.4:
+        if mIoU < 1:
             output = output.squeeze().cpu().numpy()
             mask = mask.squeeze().cpu().numpy()
             classes_detected = [noun_phrases[i] for i in np.unique(output)]
-            fig = plot_segmentation(image, output, noun_phrases, classes_detected, mask, mIoU=mIoU.item())
-            fig.savefig("bad_results_xdecoder/{}.png".format(i))
+            fig = plot_segmentation(image, output, noun_phrases, classes_detected, gt=mask, mIoU=mIoU.item())
+            #fig.savefig("bad_results_xdecoder/{}.png".format(i))
 
     print("Average mIoU: {}".format(sum(mIoU_list) / len(mIoU_list)))
     num_bins = 20

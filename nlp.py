@@ -70,6 +70,16 @@ def break_down_chunks(chunks, nlp):
             new_list.append(string)
     return new_list
 
+def get_nouns(captions, spacy_model):
+    all_nouns = []
+    for cap in captions:
+        cap = remove_repeated_words(cap)
+        doc = spacy_model(cap)
+        nouns = [token.lemma_ for token in doc if token.pos_ == 'NOUN']
+        #nouns = [token.lemma_ if token.tag_ == 'NNS' else token.text for token in nouns]
+        all_nouns += nouns
+    return list(set(all_nouns))
+
 # def find_matching_labels(chunks, labels, model=None, background=False):
     # if background:
     #     labels += ['background', 'unknown']
@@ -94,5 +104,6 @@ if __name__ == "__main__":
     #find_matching_labels(['a giraffe', 'zebras', 'ostriches', 'a person standing in front of a white wall', 'water water water'], [['zebra'], ['giraffe'], ['ostrich'], ['person'], ['water']], spacy_model)
 
     captions = ['a giraffe', 'zebras', 'ostriches', 'a person standing in front of a white wall', 'water water water']
-    chunks = get_noun_chunks(captions, spacy_model)
+    #chunks = get_noun_chunks(captions, spacy_model)
+    chunks = get_nouns(captions, spacy_model)
     print(chunks)

@@ -55,7 +55,7 @@ def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
         sem_seg = outputs[-1]['sem_seg'].max(0)[1]
         classes_detected = sem_seg.unique()
         classes_detected = [classes[i] for i in classes_detected]
-        sem_seg = sem_seg.cpu().numpy().T
+        sem_seg = sem_seg.cpu().numpy()
     if plot:
         if input_tensor:
             image_ori = image_ori.squeeze().detach().cpu().numpy().transpose(1, 2, 0)
@@ -63,23 +63,36 @@ def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
     return sem_seg
 
 
-def plot_segmentation(image, sem_seg, classes_detected, classes, gt, mIoU=None):
-    fig, axs = plt.subplots(1, 3, figsize=(30, 10))
+def plot_segmentation(image, sem_seg, classes_detected, classes, gt=None, mIoU=None):
     suptitle = "Input labels: " + ','.join(classes)
-    fig.suptitle(suptitle, fontsize=20)
-    axs[0].imshow(image)
-    axs[0].set_title("Original Image", fontsize=20)
-    axs[1].imshow(gt)
-    axs[1].set_title("Ground Truth", fontsize=20)
-    cluster_plot = axs[2].imshow(sem_seg)
-    axs[2].set_title("Segmented Image", fontsize=20)
-    values = np.unique(sem_seg)
-    colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
-    # create a patch (proxy artist) for every color
-    patches = [ mpatches.Patch(color=colors[i], label=classes_detected[i] ) for i in range(len(values)) ]
-    # put those patched as legend-handles into the legend
-    plt.legend(handles=patches)
-
+    if gt is not None:
+        fig, axs = plt.subplots(1, 3, figsize=(30, 10))
+        fig.suptitle(suptitle, fontsize=20)
+        axs[0].imshow(image)
+        axs[0].set_title("Original Image", fontsize=20)
+        axs[1].imshow(gt)
+        axs[1].set_title("Ground Truth", fontsize=20)
+        cluster_plot = axs[2].imshow(sem_seg)
+        axs[2].set_title("Segmented Image", fontsize=20)
+        values = np.unique(sem_seg)
+        colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
+        # create a patch (proxy artist) for every color
+        patches = [ mpatches.Patch(color=colors[i], label=classes_detected[i] ) for i in range(len(values)) ]
+        # put those patched as legend-handles into the legend
+        plt.legend(handles=patches)
+    else:
+        fig, axs = plt.subplots(1, 2, figsize=(20, 10))
+        fig.suptitle(suptitle, fontsize=20)
+        axs[0].imshow(image)
+        axs[0].set_title("Original Image", fontsize=20)
+        cluster_plot = axs[1].imshow(sem_seg)
+        axs[1].set_title("Segmented Image", fontsize=20)
+        values = np.unique(sem_seg)
+        colors = [ cluster_plot.cmap(cluster_plot.norm(value)) for value in values]
+        # create a patch (proxy artist) for every color
+        patches = [ mpatches.Patch(color=colors[i], label=classes_detected[i] ) for i in range(len(values)) ]
+        # put those patched as legend-handles into the legend
+        plt.legend(handles=patches)
 
     if mIoU is not None:
         plt.suptitle("mIoU: {:.2f}".format(mIoU), fontsize=20)
