@@ -32,16 +32,20 @@ def load_xdecoder_model(device):
 
 def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
     with torch.no_grad():
-        model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(classes, is_eval=False)
+        model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(classes + ["background"], is_eval=True)
         metadata = MetadataCatalog.get('demo')
         model.model.metadata = metadata
         model.model.sem_seg_head.num_classes = len(classes)
 
+        t = []
+        t.append(transforms.Resize(512, interpolation=Image.BICUBIC))
+        transform = transforms.Compose(t)
+
         if not input_tensor:
             width = image_ori.size[-2]
             height = image_ori.size[-1]
-            #image = transform(image_ori)
-            image = np.asarray(image_ori)
+            image = transform(image_ori)
+            image = np.asarray(image)
             #image_ori = np.asarray(image_ori)
             image = torch.from_numpy(image.copy()).permute(2, 0, 1).cuda()
 
