@@ -70,13 +70,14 @@ def break_down_chunks(chunks, nlp):
             new_list.append(string)
     return new_list
 
-def get_nouns(captions, spacy_model):
+def get_nouns(captions, spacy_model, add_background=True):
     all_nouns = []
     for cap in captions:
         cap = remove_repeated_words(cap)
         doc = spacy_model(cap)
         nouns = [token.lemma_ for token in doc if token.pos_ == 'NOUN']
-        #nouns = [token.lemma_ if token.tag_ == 'NNS' else token.text for token in nouns]
+        if add_background:
+            nouns += ['background']
         all_nouns += nouns
     return list(set(all_nouns))
 

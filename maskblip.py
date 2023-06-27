@@ -24,7 +24,8 @@ def print_cuda_memory():
 
 
 class MaskBLIP(torch.nn.Module):
-    def __init__(self, device, scales=[384, 512], cluster_range=(2, 8), smoothness_weight=6, smoothness_theta=0.8, pos_emb_dim=256):
+    def __init__(self, device, scales=[384, 512], cluster_range=(2, 8), smoothness_weight=6, smoothness_theta=0.8, pos_emb_dim=256,
+                 use_nucleus=True, num_beams=3, top_p=0.9, repetition_penalty=3.0, attention_mode="global", use_background=True, use_xdecoder=False,):
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
 
@@ -41,13 +42,24 @@ class MaskBLIP(torch.nn.Module):
         self.prompt = self.init_prompt()
         self.vis_processors = vis_processors
         self.txt_processors = txt_processors
+
+        #clustering
         self.crf = CRF(n_spatial_dims=2, requires_grad=False, smoothness_weight=smoothness_weight, smoothness_theta=smoothness_theta)
         self.scales = scales
         self.img_size = max(self.scales)
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
         self.cluster_range = cluster_range
         self.pos_emb_dim = pos_emb_dim
+
+        #captioning
         self.spacy_model = spacy.load("en_core_web_sm")
+        self.use_nucleus = use_nucleus
+        self.num_beams = num_beams
+        self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
+        self.attention_mode = attention_mode
+        self.use_background = use_background
+
 
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
@@ -58,7 +70,7 @@ class MaskBLIP(torch.nn.Module):
         prompt.input_ids = prompt.input_ids[:, :-1]
         return prompt
 
-    def forward(self, raw_image, gt_mask=None, clean=False, attention_mode="global"):
+    def forward(self, raw_image, gt_mask=None, clean=True, attention_mode="global"):
         clusterings = []
         max_emb_size = max(self.scales) // 16
         if gt_mask is None:
@@ -104,13 +116,13 @@ class MaskBLIP(torch.nn.Module):
         if self.captioning:
             self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                 interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
-            captions_list = self.generate_captions(raw_image, final_clusters, attention_mode=attention_mode)
+            captions_list = self.generate_captions(raw_image, final_clusters)
             return final_clusters, captions_list
         else:
             return final_clusters
 
     # Get captions from already generated clusters, useful to generate multiple captions from the same cluster
-    def generate_captions(self, image, clusters, attention_mode='global', filter_captions=False):
+    def generate_captions(self, image, clusters):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
 
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
@@ -127,7 +139,7 @@ class MaskBLIP(torch.nn.Module):
             # slice image_emb using cluster indices
             cluster_embs = []
 
-            if attention_mode in ["local", "concat", "cls"]:
+            if self.attention_mode in ["local", "concat", "cls"]:
                 pre_attention = self.BLIPcap.visual_encoder.patch_embed(image)
                 B = pre_attention.shape[0]
                 encoder = self.BLIPcap.visual_encoder
@@ -145,13 +157,13 @@ class MaskBLIP(torch.nn.Module):
                     for j, blk in enumerate(encoder.blocks):
                         x = blk(x, register_blk == j)
                     x = encoder.norm(x).squeeze()
-                    if attention_mode == "local":
+                    if self.attention_mode == "local":
                         cluster_embs.append(x)
-                    elif attention_mode == "concat":
+                    elif self.attention_mode == "concat":
                         global_attention_emb = image_emb[idx].squeeze()[cluster_indices[i]]
                         x = torch.concat((x, global_attention_emb),0)
                         cluster_embs.append(x)
-                    elif attention_mode == "cls":
+                    elif self.attention_mode == "cls":
                         cluster_embs.append(x[0])
 
             else:
@@ -165,37 +177,19 @@ class MaskBLIP(torch.nn.Module):
                     visual_embeds=emb.clone().detach().unsqueeze(0),
                     sep_token_id=self.BLIPcap.tokenizer.sep_token_id,
                     pad_token_id=self.BLIPcap.tokenizer.pad_token_id,
-                    use_nucleus_sampling=True,
-                    num_beams=5,
+                    use_nucleus_sampling=self.use_nucleus,
+                    num_beams=self.num_beams,
                     max_length=15,
                     min_length=3,
-                    top_p=0.9,
-                    repetition_penalty=3.0,
+                    top_p=self.top_p,
+                    repetition_penalty=self.repetition_penalty,
                 )
                 outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
                 caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
                 captions.append(caption[0])
-            captions = self.filter_cap(captions, cluster_embs) if filter_captions else captions
             captions_list.append(captions)
 
         return captions_list
-
-    def filter_cap(self, captions, cluster_embs):
-        filtered_captions = []
-        for i, c in enumerate(captions):
-            noun_phrases = get_noun_chunks([c], self.spacy_model)
-            phrase_embs = []
-            for np in noun_phrases:
-                phrase_emb = self.BLIPcap.extract_features({"text_input": [np]}, mode="text").text_embeds[:,0,:]
-                phrase_embs.append(phrase_emb)
-            phrase_embs = torch.stack(phrase_embs).squeeze()
-            cluster_emb = torch.mean(cluster_embs[i], axis=0)
-            cluster_emb = cluster_emb.unsqueeze(0).repeat(phrase_embs.shape[0], 1)
-            cosine_sim = torch.cosine_similarity(phrase_embs, cluster_emb, dim=1)
-            filtered_captions.append(noun_phrases[torch.argmax(cosine_sim)])
-
-        return filtered_captions
-
 
 def majority_filter(image, size):
     # Create a sliding window view of the image
@@ -379,3 +373,4 @@ if __name__ == "__main__":
 
     xdecoder_model = load_xdecoder_model("cuda")
     xdecoder_segments = segment_image(xdecoder_model, raw_image, chunks, plot=True)
+

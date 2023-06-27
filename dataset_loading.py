@@ -14,6 +14,7 @@ import numpy as np
 import os
 import pickle as pkl
 from torchvision.datasets import CocoDetection, Cityscapes, VOCSegmentation
+from scipy.io import loadmat
 
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -210,14 +211,44 @@ class CocoDetectionWithPaths(CocoDetection):
         return img, target, path
 
 # Usage
-dataset = CocoDetectionWithPaths('../datasets/coco/val2017',
-                                 '../datasets/coco/annotations/instances_val2017.json',
-                                 transform=transforms.ToTensor())
+# dataset = CocoDetectionWithPaths('../datasets/coco/val2017',
+#                                  '../datasets/coco/annotations/instances_val2017.json',
+#                                  transform=transforms.ToTensor())
+
+class PascalContextDataset(torch.utils.data.Dataset):
+    def __init__(self, img_folder, annotation_folder):
+        super().__init__()
+        self.img_folder = img_folder
+        self.annotation_folder = annotation_folder
+        self.annotation_files = sorted(os.listdir(annotation_folder))
+        self.transform = transforms.ToTensor()
+
+    def __len__(self):
+        return len(self.annotation_files)
+
+    def __getitem__(self, idx):
+        annotation_file = self.annotation_files[idx]
+        annotation_path = os.path.join(self.annotation_folder, annotation_file)
+
+        # Assuming the image file has the same name as the annotation file but with a .jpg extension
+        img_file = os.path.splitext(annotation_file)[0] + '.jpg'
+        img_path = os.path.join(self.img_folder, img_file)
+
+        # Open image file
+        img = Image.open(img_path)
+        img = self.transform(img)
+
+        # Load .mat annotation file
+        mat = loadmat(annotation_path)
+        annotation = torch.from_numpy(mat['LabelMap'].astype(np.int32))
+
+        return img, annotation, img_file
+
 
 def load_dataset(dataset_name):
     preprocessing_fn = None
     if dataset_name == 'voc':
-        dataset = VOCWithPaths('../datasets', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
+        dataset = VOCWithPaths('../datasets/', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
         #dataset = torchvision.datasets.VOCSegmentation('../datasets', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
     elif dataset_name == 'cityscapes':
         dataset = CityscapesWithPaths('../datasets/cityscapes', split='train', mode='fine', target_type='semantic', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
@@ -228,6 +259,9 @@ def load_dataset(dataset_name):
         preprocessing_fn = coco_annsToMask
     elif dataset_name == 'ade20k':
         dataset = ADE20KDataset('../datasets')
+    elif dataset_name == 'pascal-context':
+        dataset = PascalContextDataset('../datasets/VOCdevkit/VOC2012/JPEGImages',
+                                       '../datasets/VOCdevkit/VOC2012/PascalContext/trainval')
     else:
         raise NotImplementedError('Dataset {} not implemented.'.format(dataset_name))
 
@@ -239,38 +273,12 @@ def load_dataset(dataset_name):
 
 
 if __name__ == '__main__':
-    # DATASET_PATH = '../datasets/'
-    # index_file = 'ADE20K_2021_17_01/index_ade20k.pkl'
-    # with open('{}/{}'.format(DATASET_PATH, index_file), 'rb') as f:
-    #     index_ade20k = pkl.load(f)
-    #
-    # root_path = DATASET_PATH
-    #
-    # i = 16868  # 16899, 16964
-    # nfiles = len(index_ade20k['filename'])
-    # file_name = index_ade20k['filename'][i]
-    # num_obj = index_ade20k['objectPresence'][:, i].sum()
-    # num_parts = index_ade20k['objectIsPart'][:, i].sum()
-    # count_obj = index_ade20k['objectPresence'][:, i].max()
-    # obj_id = np.where(index_ade20k['objectPresence'][:, i] == count_obj)[0][0]
-    # obj_name = index_ade20k['objectnames'][obj_id]
-    # full_file_name = '{}/{}'.format(index_ade20k['folder'][i], index_ade20k['filename'][i])
-    #
-    # info = loadAde20K('{}/{}'.format(root_path, full_file_name))
-    # img = cv2.imread(info['img_name'])[:, :, ::-1]
-    # seg = cv2.imread(info['segm_name'])[:, :, ::-1]
-    # seg_mask = seg.copy()
-    #
-    # # The 0 index in seg_mask corresponds to background (not annotated) pixels
-    # seg_mask[info['class_mask'] != obj_id + 1] *= 0
 
-
-    dataset, data_loader, preprocessing_fn = load_dataset('ade20k')
+    dataset, data_loader, preprocessing_fn = load_dataset('pascal-context')
     #data_loader = torch.utils.data.DataLoader(datase, batch_size=1, shuffle=True, num_workers=1)
-    for img, anns in data_loader:
+    for img, anns, path in data_loader:
         print(img.shape)
         print(anns.shape)
-        print(anns)
-        print(preprocessing_fn(img, anns))
+        print(path)
         break
 

@@ -30,6 +30,37 @@ def load_xdecoder_model(device):
     model = BaseModel(opt, build_model(opt)).from_pretrained(pretrained_pth).eval().to(device)
     return model
 
+def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshold=0.95, min_threshold=0.01, min_captions=2, plot=False, device='cuda:0'):
+    output = torch.tensor(
+        segment_image(xdecoder_model, images, noun_phrases, plot=plot)).unsqueeze(0).to(device)
+
+    while len(noun_phrases) >= min_captions:
+        class_counts = torch.bincount(output.contiguous().view(-1))
+
+        total_pixels = float(output.numel())
+
+        # Find the classes with occurrence more than max_threshold or less than min_threshold
+        dominant_classes = ((class_counts / total_pixels) > max_threshold).nonzero(as_tuple=True)[0].tolist()
+        minor_classes = ((class_counts / total_pixels) < min_threshold).nonzero(as_tuple=True)[0].tolist()
+
+        # Check if there are any classes to remove
+        if dominant_classes:
+            # Remove the dominant classes from the list of captions and run again
+            noun_phrases = [np for i, np in enumerate(noun_phrases) if i not in dominant_classes]
+        elif minor_classes:
+            print("No dominant classes found, removing minor classes")
+            # If no dominant classes, remove the minor classes
+            noun_phrases = [np for i, np in enumerate(noun_phrases) if i not in minor_classes]
+        else:
+            # If no classes to remove, stop and return the output
+            return output, noun_phrases
+
+        output = torch.tensor(segment_image(xdecoder_model, images, noun_phrases, plot=False)).unsqueeze(0).to(device)
+
+    # If we reached here, it means there are less than min_captions left,
+    # so just return the last resized_output we got
+    return output, noun_phrases
+
 def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
     with torch.no_grad():
         model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(classes + ["background"], is_eval=True)
@@ -37,8 +68,7 @@ def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
         model.model.metadata = metadata
         model.model.sem_seg_head.num_classes = len(classes)
 
-        t = []
-        t.append(transforms.Resize(512, interpolation=Image.BICUBIC))
+        t = [transforms.Resize(512, interpolation=Image.BICUBIC)]
         transform = transforms.Compose(t)
 
         if not input_tensor:
@@ -53,17 +83,17 @@ def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
             image = image_ori
             width = image.size()[-1]
             height = image.size()[-2]
+            image = transform(image)
+            image_ori = image.squeeze().detach().cpu().numpy().transpose(1, 2, 0)
 
         batch_inputs = [{'image': image.squeeze(), 'height': height, 'width': width}]
         outputs = model.forward(batch_inputs)
         sem_seg = outputs[-1]['sem_seg'].max(0)[1]
         classes_detected = sem_seg.unique()
         classes_detected = [classes[i] for i in classes_detected]
-        sem_seg = sem_seg.cpu().numpy()
     if plot:
-        if input_tensor:
-            image_ori = image_ori.squeeze().detach().cpu().numpy().transpose(1, 2, 0)
-        plot_segmentation(image_ori, sem_seg, classes_detected, classes)
+        plot_segmentation(image_ori, sem_seg.cpu().numpy(), classes_detected, classes)
+
     return sem_seg
 
 

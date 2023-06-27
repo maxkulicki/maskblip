@@ -114,5 +114,4 @@ sweep_configuration = {
 }
 
 wandb.agent("a3k89xw3", function=main, count=20, project="maskblip")
-# if __name__ == '__main__':
-#     score = pascal_miou(sweep_configuration['parameters'])
+

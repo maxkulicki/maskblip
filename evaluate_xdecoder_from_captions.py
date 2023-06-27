@@ -14,6 +14,10 @@ from nlp import get_noun_chunks, get_nouns, load_spacy
 from PIL import Image
 import json
 from scipy.stats import mode
+# from detectron2.data import MetadataCatalog
+# from detectron2.utils.colormap import random_color
+# from detectron2.data.catalog import Metadata
+# from XDecoder.utils.visualizer import Visualizer
 
 
 def preprocess_VOC_mask(annotation_path):
@@ -39,7 +43,7 @@ def preprocess_VOC_mask(annotation_path):
     # for i, u in enumerate(np.unique(mask)):
     #     mask[mask == u] = i
     return torch.tensor(mask)
-def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshold=0.95, min_threshold=0.01, min_captions=3, plot=False, device='cuda:0'):
+def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshold=0.95, min_threshold=0.01, min_captions=2, plot=False, device='cuda:0'):
     output = torch.tensor(
         segment_image(xdecoder_model, images, noun_phrases, plot=plot)).unsqueeze(0).to(device)
 
@@ -61,13 +65,13 @@ def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshol
             noun_phrases = [np for i, np in enumerate(noun_phrases) if i not in minor_classes]
         else:
             # If no classes to remove, stop and return the output
-            return output
+            return output, noun_phrases
 
         output = torch.tensor(segment_image(xdecoder_model, images, noun_phrases, plot=False)).unsqueeze(0).to(device)
 
     # If we reached here, it means there are less than min_captions left,
     # so just return the last resized_output we got
-    return output
+    return output, noun_phrases
 def compute_best_mean_IoU(ground_truth, prediction):
 
     best_ious = []
@@ -141,27 +145,46 @@ if __name__ == "__main__":
     bad_mIoU_captions = {}
 
     for i, path in enumerate(tqdm(data)):
-        image = Image.open(f"../datasets/VOCdevkit/VOC2012/JPEGImages/{path}")
-        mask_path = f"../datasets/VOCdevkit/VOC2012/SegmentationClass/{path}".replace(".jpg", ".png")
+        image = Image.open(f"../datasets/VOC2012/JPEGImages/{path}")
+        mask_path = f"../datasets/VOC2012/SegmentationClass/{path}".replace(".jpg", ".png")
         mask = preprocess_VOC_mask(mask_path).to(device)
         noun_phrases = data[path]
         if use_nouns_only:
             noun_phrases = get_nouns(noun_phrases, load_spacy())
-            noun_phrases.append("background")
+            #noun_phrases.append("background")
 
+        output, noun_phrases = segment_with_sanity_check(xdecoder_model, image, noun_phrases, plot=False)
         print(noun_phrases)
-        output = segment_with_sanity_check(xdecoder_model, image, noun_phrases, device=device, plot=False)
+
+        #output = segment_image(xdecoder_model, image, noun_phrases,  plot=False)
+
+        # colors = [random_color(rgb=True, maximum=255).astype(np.int32).tolist() for _ in
+        #                 range(len(noun_phrases))]
+        # stuff_dataset_id_to_contiguous_id = {x: x for x in range(len(noun_phrases))}
+        # MetadataCatalog.get(str(i)).set(
+        #     stuff_colors=colors,
+        #     stuff_classes=noun_phrases,
+        #     stuff_dataset_id_to_contiguous_id=stuff_dataset_id_to_contiguous_id,
+        # )
+        # metadata = MetadataCatalog.get(str(i))
+        # visual = Visualizer(image, metadata=metadata)
+        # output_image = visual.draw_sem_seg(output.cpu().numpy().squeeze(), alpha=0.5).get_image() # rgb Image
+        # plt.imshow(output_image)
+        # plt.show()
+
+        #output = torch.from_numpy(output).to(device)
+
         transform = PILToTensor()
         mIoU = compute_best_mean_IoU(mask, output)
         mIoU_list.append(mIoU.item())
         print("mIoU: {}".format(mIoU.item()))
 
-        if mIoU < 1:
+        if mIoU < 0.4:
             output = output.squeeze().cpu().numpy()
             mask = mask.squeeze().cpu().numpy()
             classes_detected = [noun_phrases[i] for i in np.unique(output)]
             fig = plot_segmentation(image, output, noun_phrases, classes_detected, gt=mask, mIoU=mIoU.item())
-            #fig.savefig("bad_results_xdecoder/{}.png".format(i))
+            fig.savefig("bad_results_xdecoder/{}.png".format(i))
 
     print("Average mIoU: {}".format(sum(mIoU_list) / len(mIoU_list)))
     num_bins = 20
