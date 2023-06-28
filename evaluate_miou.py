@@ -61,12 +61,12 @@ def compute_best_mean_IoU(gt_masks, predictions, sizes):
 
     return total_mean_IoU / len(gt_masks)
 
-def evaluate_mIoU(dataset="pascal_context", device="cuda", **kwargs):
+def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwargs):
     model = MaskBLIP(device, **kwargs)
 
     xdecoder_model = load_xdecoder_model("cuda")
 
-    dataset, dataloader, _ = load_dataset(dataset, batch_size=2)
+    dataset, dataloader, _ = load_dataset(dataset, batch_size=batch_size)
 
 
     transform = Compose([

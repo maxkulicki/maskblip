@@ -3,7 +3,7 @@ import wandb
 
 def main():
     wandb.init(project='maskblip')
-    score = evaluate_mIoU(wandb.config, device='cpu')
+    score = evaluate_mIoU(wandb.config, device='cpu', batch_size=1, dataset='pascal_context')
     wandb.log({'score': score})
 
 sweep_configuration = {
