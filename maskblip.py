@@ -5,6 +5,7 @@ from torchvision.transforms import Compose, Resize, ToTensor, Normalize, Interpo
 from positional_encodings.torch_encodings import PositionalEncoding2D
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -14,7 +15,7 @@ from skimage.util import view_as_windows
 from scipy.stats import mode
 import torch_kmeans
 import wandb
-from nlp import get_noun_chunks
+from nlp import get_noun_chunks, get_nouns
 from xdecoder_semseg import load_xdecoder_model, segment_image
 import spacy
 
@@ -28,13 +29,6 @@ class MaskBLIP(torch.nn.Module):
                  use_nucleus=True, num_beams=3, top_p=0.9, repetition_penalty=3.0, attention_mode="global", use_background=True, use_xdecoder=False,):
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
-
-        model2, _, _ = load_model_and_preprocess(name="blip_feature_extractor", model_type="base",
-                                                 is_eval=True, device=device)
-        model.tokenizer = model2.tokenizer
-        model.extract_features = model2.extract_features
-        model.to(device)
-        del (model2)
 
         self.device = device
         self.BLIPcap = model
@@ -63,14 +57,13 @@ class MaskBLIP(torch.nn.Module):
 
     def init_prompt(self):
         prompt = [self.BLIPcap.prompt]
-        # prompt_text = "A one-word summary of this image: "
-        # prompt = [prompt_text]
         prompt = self.BLIPcap.tokenizer(prompt, return_tensors="pt").to(self.device)
         prompt.input_ids[:, 0] = self.BLIPcap.tokenizer.bos_token_id
         prompt.input_ids = prompt.input_ids[:, :-1]
         return prompt
 
-    def forward(self, raw_image, gt_mask=None, clean=True, attention_mode="global"):
+    def forward(self, raw_images, gt_mask=None, clean=True):
+        batch_size = raw_images.shape[0]
         clusterings = []
         max_emb_size = max(self.scales) // 16
         if gt_mask is None:
@@ -83,16 +76,16 @@ class MaskBLIP(torch.nn.Module):
                     interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
                 self.BLIPcap.visual_encoder.patch_embed.img_size = (img_size, img_size)
 
-                image = Resize(size=(img_size, img_size), antialias=True)(raw_image).to(self.device)
+                image = Resize(size=(img_size, img_size), antialias=True)(raw_images).to(self.device)
                 embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-                embs = embs.reshape(1, emb_size, emb_size, -1)
+                embs = embs.reshape(batch_size, emb_size, emb_size, -1)
                 p_enc = p_enc_2d(embs)
                 embs = torch.cat([embs, p_enc], dim=-1)
                 for n_clust in self.cluster_range:
                     kmeans = torch_kmeans.KMeans(n_clusters=n_clust, verbose=False)
                     result = kmeans(embs.flatten(1,2)).labels
-                    result_np = result.reshape(emb_size, emb_size).cpu().numpy()
-                    result_np = resize(result_np, (max_emb_size, max_emb_size))
+                    result_np = result.reshape(batch_size, emb_size, emb_size).cpu().numpy()
+                    result_np = resize(result_np, (batch_size, max_emb_size, max_emb_size))
                     clusterings.append(result_np)
                     del result, result_np
                     torch.cuda.empty_cache()
@@ -100,23 +93,24 @@ class MaskBLIP(torch.nn.Module):
                 del embs, image, p_enc, kmeans
                 torch.cuda.empty_cache()
                 #print_cuda_memory()
-
-            aligned_clusterings = align_clusterings(clusterings)
-            prob_map = create_probability_map(aligned_clusterings)
-            final_clusters = self.crf(torch.tensor(np.transpose(prob_map, (2,0,1))).unsqueeze(0))
-            final_clusters = torch.argmax(final_clusters, dim=1)
+            prob_maps = []
+            for i in range(batch_size):
+                aligned = align_clusterings([clusterings[j][i] for j in range(len(clusterings))])
+                prob_map = create_probability_map(aligned)
+                prob_maps.append(prob_map)
+            prob_maps = torch.stack(prob_maps)
+            final_clusters = torch.argmax(self.crf(prob_maps), dim=-1)
         else:
             final_clusters = torch.tensor(gt_mask).unsqueeze(0).to(self.device)
             final_clusters = Resize(size=self.output_size, antialias=True, interpolation=InterpolationMode.NEAREST_EXACT)(final_clusters)
 
         if clean:
-            final_clusters = torch.tensor(clean_clusters(final_clusters.detach().cpu().numpy())).unsqueeze(0)
+            final_clusters = clean_clusters(final_clusters)
 
-        # To generate a caption with the clustering
         if self.captioning:
             self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                 interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
-            captions_list = self.generate_captions(raw_image, final_clusters)
+            captions_list = self.generate_captions(raw_images, final_clusters)
             return final_clusters, captions_list
         else:
             return final_clusters
@@ -126,7 +120,10 @@ class MaskBLIP(torch.nn.Module):
         image = Resize(size=(self.img_size, self.img_size), antialias=True)(image).to(self.device)
 
         image_emb = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-        captions_list = []
+
+        token_list = []
+        nr_captions_per_img = []
+
         for idx, c in enumerate(clusters):
             captions = []
             c = c.unsqueeze(0)
@@ -184,49 +181,72 @@ class MaskBLIP(torch.nn.Module):
                     top_p=self.top_p,
                     repetition_penalty=self.repetition_penalty,
                 )
-                outputs = self.BLIPcap.tokenizer.batch_decode(decoder_out, skip_special_tokens=True)
-                caption = [output[len(self.BLIPcap.prompt):] for output in outputs]
-                captions.append(caption[0])
-            captions_list.append(captions)
+                token_list.append(list(decoder_out[0]))
+            nr_captions_per_img.append(len(cluster_embs))
+
+
+        outputs = self.BLIPcap.tokenizer.batch_decode(token_list, skip_special_tokens=True)
+
+        captions_list = [outputs[i:i + nr_captions_per_img[idx]] for idx, i in enumerate(np.cumsum(nr_captions_per_img) - nr_captions_per_img)]
 
         return captions_list
 
-def majority_filter(image, size):
-    # Create a sliding window view of the image
-    shape = (size, size)
-    windowed_image = view_as_windows(image, shape)
 
-    # Compute the mode in each window
-    modes, _ = mode(windowed_image.reshape(-1, size * size), axis=1)
-    modes = modes.reshape(image.shape[0] - size + 1, image.shape[1] - size + 1)
+def majority_filter(tensor, footprint_size):
+    padding_size = footprint_size // 2
+    height, width = tensor.shape
 
-    # Pad modes to match the original image size
-    pad_width = size // 2
-    modes = np.pad(modes, pad_width, mode='edge')
+    # Padding tensor to handle boundaries
+    tensor = F.pad(tensor.unsqueeze(0), (padding_size,) * 4, mode='replicate').squeeze(0)
 
-    return modes
+    # Create a tensor to hold the results
+    result = torch.zeros_like(tensor)
 
+    for y in range(padding_size, height + padding_size):
+        for x in range(padding_size, width + padding_size):
+            # Apply the filter by taking a slice
+            window = tensor[y - padding_size:y + padding_size + 1, x - padding_size:x + padding_size + 1]
 
-def clean_clusters(image, footprint_size=3):
-    # Apply majority filter recursively until convergence
-    for i in range(5):
-        new_image = majority_filter(image.squeeze(), footprint_size)
-        mask = np.abs(image - new_image) > 1e-5  # Tolerance for floating point errors
-        if not np.any(mask):
+            # Find the histogram of the window
+            hist = torch.histc(window.flatten(), bins=256, min=0, max=255)
+
+            # Find the mode from the histogram
+            mode = torch.argmax(hist)
+
+            # Set the result at the center of the window as the mode
+            result[y, x] = mode
+
+    # Removing the padding
+    result = result[padding_size:-padding_size, padding_size:-padding_size]
+
+    return result
+
+def clean_clusters(tensor, footprint_size=3, max_iter=8):
+    tensor = tensor.float()  # Convert to float for precision in calculations
+    batch_size = tensor.shape[0]
+
+    for i in range(max_iter):
+        new_tensor = []
+        for b in range(batch_size):
+            image = tensor[b]
+            new_image = majority_filter(image, footprint_size)
+            new_tensor.append(new_image.unsqueeze(0))
+        new_tensor = torch.cat(new_tensor, dim=0)
+        mask = torch.abs(tensor - new_tensor) > 1e-5  # Tolerance for floating point errors
+        if not torch.any(mask):
             break
-        image = new_image
-    # print("Number of iterations: {}".format(i + 1))
-    return image
+        tensor = new_tensor
+    return tensor
+
 
 def resize(clusters, new_shape):
-    # OpenCV uses width x height instead of height x width, so reverse the dimensions
-    new_shape_cv = (new_shape[1], new_shape[0])
-    # Use cv2's resize function. Note that the interpolation method should be cv2.INTER_NEAREST for nearest-neighbor interpolation
-    resized_clusters = cv2.resize(clusters, new_shape_cv, interpolation=cv2.INTER_NEAREST)
-    return resized_clusters
+    resized_tensor = np.empty(new_shape, dtype=np.int64)
+    for (k, image) in enumerate(clusters):
+         resized_tensor[k] = cv2.resize(image, new_shape[1:], interpolation=cv2.INTER_NEAREST)
+    return torch.from_numpy(resized_tensor)
 
 def compute_cost(clustering1, clustering2):
-    return np.sum(clustering1 != clustering2)
+    return torch.sum(clustering1 != clustering2)
 
 def align_clusterings(clusterings):
     # Find the reference clustering (the one with the most unique clusters)
@@ -252,7 +272,7 @@ def align_clusterings(clusterings):
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
 
         # Create the aligned clustering
-        aligned_clustering = clustering.copy()
+        aligned_clustering = clustering.clone()
         for old_label, new_label in zip(unique_clusters[col_ind], unique_clusters_ref[row_ind]):
             aligned_clustering[clustering == old_label] = new_label
 
@@ -291,8 +311,8 @@ def interpolate_pos_encoding(pos_embed, emb_size):
     return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
 def create_probability_map(clusterings, epsilon=1e-6):
-    num_clusters = max([np.max(clustering) for clustering in clusterings]) + 1
-    prob_map = np.zeros(list(clusterings[0].shape) + [num_clusters])
+    num_clusters = max([torch.max(clustering) for clustering in clusterings]) + 1
+    prob_map = torch.zeros(list(clusterings[0].shape) + [num_clusters])
 
     for clustering in clusterings:
         for label in range(num_clusters):
@@ -301,7 +321,7 @@ def create_probability_map(clusterings, epsilon=1e-6):
     prob_map /= len(clusterings)
     prob_map += epsilon
 
-    return prob_map / np.sum(prob_map, axis=-1, keepdims=True)
+    return prob_map / torch.sum(prob_map, axis=-1, keepdims=True)
 
 def plot_result(image, clusters, captions):
 
@@ -318,7 +338,7 @@ def plot_result(image, clusters, captions):
     # This creates a colorbar for the segmentation plot
     cbar = fig.colorbar(cax, ax=axs[0], ticks=unique_clusters, spacing='proportional')
     # This sets the labels of the colorbar to correspond to your captions
-    cbar.ax.set_yticklabels(captions[0])  # change fontsize and rotation as necessary
+    cbar.ax.set_yticklabels(captions)  # change fontsize and rotation as necessary
 
     # Show the plot
     plt.tight_layout()
@@ -329,12 +349,17 @@ if __name__ == "__main__":
     wandb_track = False
 
     img_path = "images/boats.jpg"
+    img_path2 = "images/bear.jpg"
     raw_image = Image.open(img_path)
     transform = Compose([
         ToTensor(),
+        Resize((512, 512)),
         Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
     ])
     image = transform(raw_image).unsqueeze(0)
+    image2 = transform(Image.open(img_path2)).unsqueeze(0)
+
+    batch = torch.cat([image, image2], dim=0)
 
     # Parameters from best parameter sweep
     scales = [384, 512]
@@ -361,16 +386,15 @@ if __name__ == "__main__":
     model = MaskBLIP(device, scales=scales, cluster_range=cluster_range, smoothness_theta=smoothness_theta, smoothness_weight=smoothness_weight, pos_emb_dim=pos_emb_dim)
 
     print("model loaded")
-    clusters, captions = model(image, clean=cleanup)
+    clusters, captions = model(batch, clean=cleanup)
 
     print(captions)
+    plot_result(image, clusters[0], captions[0])
 
-    plot_result(image, clusters, captions)
-
-    chunks = get_noun_chunks(captions[0], model.spacy_model)
+    chunks = [get_nouns(captions[i], model.spacy_model) for i in range(len(captions))]
     del model, clusters, captions
     torch.cuda.empty_cache()
 
     xdecoder_model = load_xdecoder_model("cuda")
-    xdecoder_segments = segment_image(xdecoder_model, raw_image, chunks, plot=True)
+    xdecoder_segments = segment_image(xdecoder_model, batch, chunks, plot=True, input_tensor=True)
 

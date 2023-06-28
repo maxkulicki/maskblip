@@ -21,7 +21,7 @@ sweep_configuration = {
         'smoothness_theta': {'values': [0.5, 1.0, 1.5, 2.0]},
         'nr_of_scales': {'values': [2, 3, 4, 5]},
         'scale_step': {'values': [32, 64, 128]},
-        'use_nucleus': {'values': [True, False]},
+        'use_nucleus': {'values': [False]},
         'repetition_penalty': {'values': [1.0, 2.0, 3.0]},
         'num_beams': {'values': [1,  3, 5]},
         'top_p': {'values': [0.8, 0.9, 0.95]},
