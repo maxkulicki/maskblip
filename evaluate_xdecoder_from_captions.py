@@ -125,7 +125,6 @@ if __name__ == "__main__":
     spacy_model = load_spacy()
     xdecoder_model = load_xdecoder_model(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
-
     if wandb_track:
         run = wandb.init(
             # Set the project where this run will be logged

@@ -221,7 +221,7 @@ class PascalContextDataset(torch.utils.data.Dataset):
         self.img_folder = img_folder
         self.annotation_folder = annotation_folder
         self.annotation_files = sorted(os.listdir(annotation_folder))
-        self.transform = transforms.ToTensor()
+        self.transform = transforms.Compose([transforms.ToTensor(), transforms.Resize((512, 512))])
 
     def __len__(self):
         return len(self.annotation_files)
@@ -236,16 +236,16 @@ class PascalContextDataset(torch.utils.data.Dataset):
 
         # Open image file
         img = Image.open(img_path)
+        img_size = img.size
         img = self.transform(img)
 
         # Load .mat annotation file
         mat = loadmat(annotation_path)
-        annotation = torch.from_numpy(mat['LabelMap'].astype(np.int32))
+        annotation = self.transform(mat['LabelMap'].astype(np.int32))
+        return img, annotation, img_file, img_size
 
-        return img, annotation, img_file
 
-
-def load_dataset(dataset_name):
+def load_dataset(dataset_name, batch_size=1):
     preprocessing_fn = None
     if dataset_name == 'voc':
         dataset = VOCWithPaths('../datasets/', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
@@ -265,7 +265,7 @@ def load_dataset(dataset_name):
     else:
         raise NotImplementedError('Dataset {} not implemented.'.format(dataset_name))
 
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=1)
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=1)
 
     return dataset, data_loader, preprocessing_fn
 
@@ -275,7 +275,6 @@ def load_dataset(dataset_name):
 if __name__ == '__main__':
 
     dataset, data_loader, preprocessing_fn = load_dataset('pascal-context')
-    #data_loader = torch.utils.data.DataLoader(datase, batch_size=1, shuffle=True, num_workers=1)
     for img, anns, path in data_loader:
         print(img.shape)
         print(anns.shape)

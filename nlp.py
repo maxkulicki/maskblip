@@ -70,7 +70,7 @@ def break_down_chunks(chunks, nlp):
             new_list.append(string)
     return new_list
 
-def get_nouns(captions, spacy_model, add_background=True):
+def get_nouns(captions, spacy_model, add_background=False):
     all_nouns = []
     for cap in captions:
         cap = remove_repeated_words(cap)

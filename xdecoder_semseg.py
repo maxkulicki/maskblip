@@ -61,40 +61,43 @@ def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshol
     # so just return the last resized_output we got
     return output, noun_phrases
 
-def segment_image(model, image_ori, classes, input_tensor=False, plot=False):
-    with torch.no_grad():
-        model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(classes + ["background"], is_eval=True)
-        metadata = MetadataCatalog.get('demo')
-        model.model.metadata = metadata
-        model.model.sem_seg_head.num_classes = len(classes)
+def segment_image(model, images, classes, input_tensor=False, plot=False):
+    sem_segs = []
+    for i, image_ori in enumerate(images):
+        with torch.no_grad():
+            model.model.sem_seg_head.predictor.lang_encoder.get_text_embeddings(classes[i] + ["background"], is_eval=True)
+            metadata = MetadataCatalog.get('demo')
+            model.model.metadata = metadata
+            model.model.sem_seg_head.num_classes = len(classes)
 
-        t = [transforms.Resize(512, interpolation=Image.BICUBIC)]
-        transform = transforms.Compose(t)
+            t = [transforms.Resize(512, interpolation=Image.BICUBIC)]
+            transform = transforms.Compose(t)
 
-        if not input_tensor:
-            width = image_ori.size[-2]
-            height = image_ori.size[-1]
-            image = transform(image_ori)
-            image = np.asarray(image)
-            #image_ori = np.asarray(image_ori)
-            image = torch.from_numpy(image.copy()).permute(2, 0, 1).cuda()
+            if not input_tensor:
+                width = image_ori.size[-2]
+                height = image_ori.size[-1]
+                image = transform(image_ori)
+                image = np.asarray(image)
+                image = torch.from_numpy(image.copy()).permute(2, 0, 1).cuda()
 
-        else:
-            image = image_ori
-            width = image.size()[-1]
-            height = image.size()[-2]
-            image = transform(image)
-            image_ori = image.squeeze().detach().cpu().numpy().transpose(1, 2, 0)
+            else:
+                image = image_ori
+                width = image.size()[-1]
+                height = image.size()[-2]
+                image = transform(image)
+                image_ori = image.squeeze().detach().cpu().numpy().transpose(1, 2, 0)
 
-        batch_inputs = [{'image': image.squeeze(), 'height': height, 'width': width}]
-        outputs = model.forward(batch_inputs)
-        sem_seg = outputs[-1]['sem_seg'].max(0)[1]
-        classes_detected = sem_seg.unique()
-        classes_detected = [classes[i] for i in classes_detected]
-    if plot:
-        plot_segmentation(image_ori, sem_seg.cpu().numpy(), classes_detected, classes)
+            batch_inputs = [{'image': image.squeeze(), 'height': height, 'width': width}]
+            outputs = model.forward(batch_inputs)
+            sem_seg = outputs[-1]['sem_seg'].max(0)[1]
+            classes_detected = sem_seg.unique()
+            classes_detected = [classes[i] for i in classes_detected]
+        if plot:
+            plot_segmentation(image_ori, sem_seg.cpu().numpy(), classes_detected, classes)
 
-    return sem_seg
+        sem_segs.append(sem_seg)
+
+    return sem_segs
 
 
 def plot_segmentation(image, sem_seg, classes_detected, classes, gt=None, mIoU=None):
