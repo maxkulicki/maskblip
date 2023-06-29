@@ -15,11 +15,11 @@ from dataset_loading import load_dataset
 from nlp import get_noun_chunks, get_nouns
 from PIL import Image
 
-def compute_best_mean_IoU(gt_masks, predictions, sizes):
+def compute_best_mean_IoU(gt_masks, predictions, sizes, device="cuda"):
     total_mean_IoU = 0
     # print(gt_masks, "\n", predictions, "\n", sizes)
     for i, ground_truth in enumerate(gt_masks):
-        prediction = predictions[i].cuda()
+        prediction = predictions[i].to(device)
         #resize gt to size
         ground_truth = F.interpolate(ground_truth.unsqueeze(0).float(), size=(sizes[1][i], sizes[0][i]), mode='nearest').squeeze(0)
 
@@ -65,7 +65,7 @@ def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwarg
     dataset, dataloader, _ = load_dataset(dataset, batch_size=batch_size, device=device)
 
     model = MaskBLIP(device, **kwargs)
-    xdecoder_model = load_xdecoder_model(device)
+    xdecoder_model = load_xdecoder_model("cuda")
 
     transform = Compose([Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))])
 
@@ -95,11 +95,11 @@ def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwarg
         # it cannot be done in batches
         all_xdecoder_outputs, all_captions_output = [], []
         for i, image in enumerate(images):
-            xdecoder_output, caption_output = segment_with_sanity_check(xdecoder_model, image, captions[i], plot=False)
+            xdecoder_output, caption_output = segment_with_sanity_check(xdecoder_model, image, captions[i], plot=True)
             all_xdecoder_outputs.append(xdecoder_output)
             # all_captions_output.append(caption_output)
 
-        mIoU = compute_best_mean_IoU(gt_masks, all_xdecoder_outputs, image_sizes)
+        mIoU = compute_best_mean_IoU(gt_masks, all_xdecoder_outputs, image_sizes, device=device)
         mIoU_list.append(mIoU)
 
         # print("xdecoder mIoU: {}".format(mIoU.item()))

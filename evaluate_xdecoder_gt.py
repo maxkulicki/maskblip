@@ -147,8 +147,8 @@ if __name__ == "__main__":
         #gt classes
         noun_phrases = [classes[i] for i in mask.unique()]
         print("Ground truth classes: {}".format(noun_phrases))
-
-        output = torch.from_numpy(segment_image(xdecoder_model, image, noun_phrases, plot=False)).to(device)#segment_with_sanity_check(xdecoder_model, image, noun_phrases, device=device, plot=False)
+        output, _ = segment_image(xdecoder_model, image, noun_phrases, plot=False)
+        output = output.to(device)
         transform = PILToTensor()
         mIoU = compute_best_mean_IoU(mask, output)
         mIoU_list.append(mIoU.item())
