@@ -30,9 +30,9 @@ def load_xdecoder_model(device):
     model = BaseModel(opt, build_model(opt)).from_pretrained(pretrained_pth).eval().to(device)
     return model
 
-def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshold=0.95, min_threshold=0.01, min_captions=2, plot=False, device='cuda:0'):
-    output = torch.tensor(
-        segment_image(xdecoder_model, images, noun_phrases, plot=plot)).unsqueeze(0).to(device)
+def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshold=0.95, min_threshold=0.01, min_captions=2, plot=False, device='cuda'):
+    output = segment_image(xdecoder_model, images, noun_phrases, plot=plot)
+    output = output.unsqueeze(0).to(device)
 
     while len(noun_phrases) >= min_captions:
         class_counts = torch.bincount(output.contiguous().view(-1))
@@ -48,14 +48,14 @@ def segment_with_sanity_check(xdecoder_model, images, noun_phrases, max_threshol
             # Remove the dominant classes from the list of captions and run again
             noun_phrases = [np for i, np in enumerate(noun_phrases) if i not in dominant_classes]
         elif minor_classes:
-            print("No dominant classes found, removing minor classes")
+            # print("No dominant classes found, removing minor classes")
             # If no dominant classes, remove the minor classes
             noun_phrases = [np for i, np in enumerate(noun_phrases) if i not in minor_classes]
         else:
             # If no classes to remove, stop and return the output
             return output, noun_phrases
 
-        output = torch.tensor(segment_image(xdecoder_model, images, noun_phrases, plot=False)).unsqueeze(0).to(device)
+        output = segment_image(xdecoder_model, images, noun_phrases, plot=False).unsqueeze(0).to(device)
 
     # If we reached here, it means there are less than min_captions left,
     # so just return the last resized_output we got

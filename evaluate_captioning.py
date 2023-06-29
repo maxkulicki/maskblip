@@ -67,8 +67,7 @@ if __name__ == "__main__":
     batch_size = 1
     plot = True
     supervised = True
-    device = 'cpu'#("cuda" if torch.cuda.is_available() else "cpu")
-    print(device)
+    device = ("cuda" if torch.cuda.is_available() else "cpu")
     model = MaskBLIP(device, scales=[384, 512])
     model.captioning = True
 

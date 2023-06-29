@@ -15,8 +15,6 @@ from dataset_loading import load_dataset
 from nlp import get_noun_chunks, get_nouns
 from PIL import Image
 
-
-
 def compute_best_mean_IoU(ground_truth, prediction):
 
     best_ious = []
@@ -56,22 +54,8 @@ def compute_best_mean_IoU(ground_truth, prediction):
     return mean_IoU
 
 def evaluate_mIoU(dataset="pascal_context", device="cuda", **kwargs):
-    #        'kmeans_range': {'values': [3, 4, 5, 6]},
-    #     'pos_emb_dim': {'values': [256, 512, 768, 1024]},
-    #     'smoothness_weight': {'min': 1.0, 'max': 10.0},
-    #     'smoothness_theta': {'min': 0.5, 'max': 2.0},
-    #     'nr_of_scales': {'values': [2, 3, 4, 5]},
-    #     'scale_step': {'values': [32, 64, 128]}
-    #captioning
-    # nucleus vs beam search
-    # repetition penalty
-    #num beams
-    # top_p
-    #local/global/both
-    #background/no background
 
     model = MaskBLIP(device, **kwargs)
-
     xdecoder_model = load_xdecoder_model("cuda")
 
     transform = Compose([
@@ -90,24 +74,13 @@ def evaluate_mIoU(dataset="pascal_context", device="cuda", **kwargs):
 
         output, captions = model(transform(images))
         captions = get_nouns(captions[0], model.spacy_model, add_background=True)
-        print(captions)
 
-        resized_output = F.interpolate(output.unsqueeze(0).float(), size=mask.shape[-2:], mode="nearest").to(device)
-
-        # images = images.squeeze()
         images = Image.open(dataset.img_folder + "/" + paths[0])
-        # xdecoder_output = segment_image(xdecoder_model, images, captions, plot=True).to(device)
-        xdecoder_output, captions = segment_with_sanity_check(xdecoder_model, images, captions, plot=True)
+        xdecoder_output, captions = segment_with_sanity_check(xdecoder_model, images, captions, plot=False)
 
         mIoU = compute_best_mean_IoU(mask, xdecoder_output.to(device))
-        print("xdecoder mIoU: {}".format(mIoU.item()))
+        mIoU_list.append(mIoU)
 
-    print("Average mIoU: {}".format(sum(mIoU_list) / len(dataloader)))
-    num_bins = 20
-    # We can set the number of bins with the `bins` argument
-    plt.hist(mIoU_list, bins=num_bins, edgecolor='black')
-    plt.show()
-    plt.savefig("mIoU_hist.png")
     return sum(mIoU_list) / len(dataloader)
 
 if __name__ == "__main__":

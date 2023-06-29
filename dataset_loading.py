@@ -260,8 +260,8 @@ def load_dataset(dataset_name):
     elif dataset_name == 'ade20k':
         dataset = ADE20KDataset('../datasets')
     elif dataset_name == 'pascal-context':
-        dataset = PascalContextDataset('../datasets/VOCdevkit/VOC2012/JPEGImages',
-                                       '../datasets/VOCdevkit/VOC2012/PascalContext/trainval')
+        dataset = PascalContextDataset('../datasets/VOC2012/JPEGImages',
+                                       '../datasets/VOC2012/PascalContext/trainval')
     else:
         raise NotImplementedError('Dataset {} not implemented.'.format(dataset_name))
 

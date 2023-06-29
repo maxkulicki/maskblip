@@ -197,7 +197,7 @@ def majority_filter(image, size):
     windowed_image = view_as_windows(image, shape)
 
     # Compute the mode in each window
-    modes, _ = mode(windowed_image.reshape(-1, size * size), axis=1)
+    modes, _ = mode(windowed_image.reshape(-1, size * size), axis=1, keepdims=True)
     modes = modes.reshape(image.shape[0] - size + 1, image.shape[1] - size + 1)
 
     # Pad modes to match the original image size
