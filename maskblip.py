@@ -26,12 +26,14 @@ def print_cuda_memory():
 
 class MaskBLIP(torch.nn.Module):
     def __init__(self, device, scales=[384, 512], cluster_range=(2, 8), smoothness_weight=6, smoothness_theta=0.8, pos_emb_dim=256,
-                 use_nucleus=True, num_beams=3, top_p=0.9, repetition_penalty=3.0, attention_mode="global", use_background=True, use_xdecoder=False,):
+                 use_nucleus=True, num_beams=3, top_p=0.9, repetition_penalty=3.0, attention_mode="global", use_background=True, use_xdecoder=False,
+                 background=False, kmeans_range=False, local_global=False, nr_of_scales=False, scale_step=False):
+        #TODO clean up those kwargs
         super().__init__()
         model, vis_processors, txt_processors = load_model_and_preprocess("blip_caption", "base_coco")
 
         self.device = device
-        self.BLIPcap = model
+        self.BLIPcap = model.to(device)
         self.captioning = True
         self.prompt = self.init_prompt()
         self.vis_processors = vis_processors
@@ -44,6 +46,8 @@ class MaskBLIP(torch.nn.Module):
         self.output_size = (max(self.scales) // 16, max(self.scales) // 16)
         self.cluster_range = cluster_range
         self.pos_emb_dim = pos_emb_dim
+        self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
+            interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
 
         #captioning
         self.spacy_model = spacy.load("en_core_web_sm")
@@ -69,15 +73,18 @@ class MaskBLIP(torch.nn.Module):
         if gt_mask is None:
             for img_size in self.scales:
                 emb_size = img_size // 16
-
+                print("111")
                 p_enc_2d = PositionalEncoding2D(self.pos_emb_dim)
 
                 self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                     interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
                 self.BLIPcap.visual_encoder.patch_embed.img_size = (img_size, img_size)
+                print("222")
 
                 image = Resize(size=(img_size, img_size), antialias=True)(raw_images).to(self.device)
                 embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
+                print("333")
+
                 embs = embs.reshape(batch_size, emb_size, emb_size, -1)
                 p_enc = p_enc_2d(embs)
                 embs = torch.cat([embs, p_enc], dim=-1)
@@ -89,15 +96,19 @@ class MaskBLIP(torch.nn.Module):
                     clusterings.append(result_np)
                     del result, result_np
                     torch.cuda.empty_cache()
+                print("444")
 
                 del embs, image, p_enc, kmeans
                 torch.cuda.empty_cache()
                 #print_cuda_memory()
             prob_maps = []
+
             for i in range(batch_size):
                 aligned = align_clusterings([clusterings[j][i] for j in range(len(clusterings))])
                 prob_map = create_probability_map(aligned)
                 prob_maps.append(prob_map)
+            print("555")
+
             prob_maps = torch.stack(prob_maps)
             final_clusters = torch.argmax(self.crf(prob_maps), dim=-1)
         else:
@@ -106,11 +117,13 @@ class MaskBLIP(torch.nn.Module):
 
         if clean:
             final_clusters = clean_clusters(final_clusters)
+            print("666")
+
 
         if self.captioning:
-            self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
-                interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, self.output_size[0]))
             captions_list = self.generate_captions(raw_images, final_clusters)
+            print("777")
+
             return final_clusters, captions_list
         else:
             return final_clusters
@@ -125,7 +138,6 @@ class MaskBLIP(torch.nn.Module):
         nr_captions_per_img = []
 
         for idx, c in enumerate(clusters):
-            captions = []
             c = c.unsqueeze(0)
             # get flattened indices of each cluster
             cluster_indices = []
@@ -367,7 +379,7 @@ if __name__ == "__main__":
     smoothness_weight = 6.26
     pos_emb_dim = 256
     cleanup = True
-    device = 'cpu'#torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if wandb_track:
         run = wandb.init(

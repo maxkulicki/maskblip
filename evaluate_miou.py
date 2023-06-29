@@ -17,10 +17,11 @@ from PIL import Image
 
 def compute_best_mean_IoU(gt_masks, predictions, sizes):
     total_mean_IoU = 0
+    # print(gt_masks, "\n", predictions, "\n", sizes)
     for i, ground_truth in enumerate(gt_masks):
-        prediction = predictions[i]
+        prediction = predictions[i].cuda()
         #resize gt to size
-        ground_truth = F.interpolate(ground_truth.unsqueeze(0), size=sizes[i], mode='nearest').squeeze(0)
+        ground_truth = F.interpolate(ground_truth.unsqueeze(0).float(), size=(sizes[1][i], sizes[0][i]), mode='nearest').squeeze(0)
 
         best_ious = []
         for i in torch.unique(ground_truth):
@@ -60,15 +61,13 @@ def compute_best_mean_IoU(gt_masks, predictions, sizes):
     return total_mean_IoU / len(gt_masks)
 
 def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwargs):
+
+    dataset, dataloader, _ = load_dataset(dataset, batch_size=batch_size, device=device)
+
     model = MaskBLIP(device, **kwargs)
-    xdecoder_model = load_xdecoder_model("cuda")
+    xdecoder_model = load_xdecoder_model(device)
 
-    dataset, dataloader, _ = load_dataset(dataset, batch_size=batch_size)
-
-
-    transform = Compose([
-        Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))
-    ])
+    transform = Compose([Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))])
 
     mIoU_list = []
     for batch in tqdm(dataloader):
@@ -77,21 +76,30 @@ def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwarg
         images = images.to(device)
         gt_masks = annotations.to(device)
 
+        print("-- getting captions --")
         output, captions = model(transform(images))
-        # print(captions)
-        # print("output shape: {}".format(output.shape))
+        print("-- got captions --")
+
         if 'background' in kwargs:
             captions = [get_nouns(cap, model.spacy_model, add_background=kwargs['background']) for cap in captions]
         else:
             captions = [get_nouns(cap, model.spacy_model) for cap in captions]
 
-        resized_output = F.interpolate(output.unsqueeze(0).float(), size=gt_masks.shape[-2:], mode="nearest").to(device)
+        # resized_output = F.interpolate(output.unsqueeze(0).float(), size=gt_masks.shape[-2:], mode="nearest").to(device)
 
-        # images = images.squeeze()
-        images = Image.open(dataset.img_folder + "/" + paths[0])
-        xdecoder_output, captions = segment_with_sanity_check(xdecoder_model, images, captions, plot=False)
+        print("-- loading --")
+        images = [Image.open(dataset.img_folder + "/" + paths[i]) for i in range(len(paths))]
+        print("-- loaded --")
 
-        mIoU = compute_best_mean_IoU(mask, xdecoder_output.to(device), image_sizes)
+        # We are looping over images+captions because we need to set text encoder to predicted nouns at each prediction,
+        # it cannot be done in batches
+        all_xdecoder_outputs, all_captions_output = [], []
+        for i, image in enumerate(images):
+            xdecoder_output, caption_output = segment_with_sanity_check(xdecoder_model, image, captions[i], plot=False)
+            all_xdecoder_outputs.append(xdecoder_output)
+            # all_captions_output.append(caption_output)
+
+        mIoU = compute_best_mean_IoU(gt_masks, all_xdecoder_outputs, image_sizes)
         mIoU_list.append(mIoU)
 
         # print("xdecoder mIoU: {}".format(mIoU.item()))

@@ -235,9 +235,9 @@ class PascalContextDataset(torch.utils.data.Dataset):
         img_path = os.path.join(self.img_folder, img_file)
 
         # Open image file
-        img = Image.open(img_path)
-        img_size = img.size
-        img = self.transform(img)
+        img_orig = Image.open(img_path)
+        img_size = img_orig.size
+        img = self.transform(img_orig)
 
         # Load .mat annotation file
         mat = loadmat(annotation_path)
@@ -245,7 +245,7 @@ class PascalContextDataset(torch.utils.data.Dataset):
         return img, annotation, img_file, img_size
 
 
-def load_dataset(dataset_name, batch_size=1):
+def load_dataset(dataset_name, batch_size=1, device='cuda'):
     preprocessing_fn = None
     if dataset_name == 'voc':
         dataset = VOCWithPaths('../datasets/', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
@@ -259,7 +259,7 @@ def load_dataset(dataset_name, batch_size=1):
         preprocessing_fn = coco_annsToMask
     elif dataset_name == 'ade20k':
         dataset = ADE20KDataset('../datasets')
-    elif dataset_name == 'pascal-context':
+    elif dataset_name == 'pascal_context':
         dataset = PascalContextDataset('../datasets/VOC2012/JPEGImages',
                                        '../datasets/VOC2012/PascalContext/trainval')
     else:
