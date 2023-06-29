@@ -57,13 +57,7 @@ def compute_best_mean_IoU(gt_masks, predictions, sizes):
         mean_IoU = torch.mean(torch.tensor(best_ious))
         total_mean_IoU += mean_IoU
 
-<<<<<<< HEAD
-    return mean_IoU
-
-def evaluate_mIoU(dataset="pascal_context", device="cuda", **kwargs):
-=======
     return total_mean_IoU / len(gt_masks)
->>>>>>> e8912c18a4ff860fbbcde288c8b0ddbf07cee48c
 
 def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwargs):
     model = MaskBLIP(device, **kwargs)
@@ -84,40 +78,30 @@ def evaluate_mIoU(dataset="pascal_context", device="cuda", batch_size=1, **kwarg
         gt_masks = annotations.to(device)
 
         output, captions = model(transform(images))
-<<<<<<< HEAD
-        captions = get_nouns(captions[0], model.spacy_model, add_background=True)
-
-=======
-        print(captions)
-        print("output shape: {}".format(output.shape))
+        # print(captions)
+        # print("output shape: {}".format(output.shape))
         if 'background' in kwargs:
             captions = [get_nouns(cap, model.spacy_model, add_background=kwargs['background']) for cap in captions]
         else:
             captions = [get_nouns(cap, model.spacy_model) for cap in captions]
-        print(captions)
 
         resized_output = F.interpolate(output.unsqueeze(0).float(), size=gt_masks.shape[-2:], mode="nearest").to(device)
 
         # images = images.squeeze()
->>>>>>> e8912c18a4ff860fbbcde288c8b0ddbf07cee48c
         images = Image.open(dataset.img_folder + "/" + paths[0])
         xdecoder_output, captions = segment_with_sanity_check(xdecoder_model, images, captions, plot=False)
 
-<<<<<<< HEAD
-        mIoU = compute_best_mean_IoU(mask, xdecoder_output.to(device))
+        mIoU = compute_best_mean_IoU(mask, xdecoder_output.to(device), image_sizes)
         mIoU_list.append(mIoU)
 
-=======
-        mIoU = compute_best_mean_IoU(gt_masks, xdecoder_output.to(device), image_sizes)
-        print("xdecoder mIoU: {}".format(mIoU.item()))
+        # print("xdecoder mIoU: {}".format(mIoU.item()))
 
-    print("Average mIoU: {}".format(sum(mIoU_list) / len(dataloader)))
-    num_bins = 20
+    # print("Average mIoU: {}".format(sum(mIoU_list) / len(dataloader)))
+    # num_bins = 20
     # We can set the number of bins with the `bins` argument
-    plt.hist(mIoU_list, bins=num_bins, edgecolor='black')
-    plt.show()
-    plt.savefig("mIoU_hist.png")
->>>>>>> e8912c18a4ff860fbbcde288c8b0ddbf07cee48c
+    # plt.hist(mIoU_list, bins=num_bins, edgecolor='black')
+    # plt.show()
+    # plt.savefig("mIoU_hist.png")
     return sum(mIoU_list) / len(dataloader)
 
 if __name__ == "__main__":
