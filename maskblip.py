@@ -73,17 +73,17 @@ class MaskBLIP(torch.nn.Module):
         if gt_mask is None:
             for img_size in self.scales:
                 emb_size = img_size // 16
-                print("111")
+                # print("111")
                 p_enc_2d = PositionalEncoding2D(self.pos_emb_dim)
 
                 self.BLIPcap.visual_encoder.pos_embed = nn.Parameter(
                     interpolate_pos_encoding(self.BLIPcap.visual_encoder.pos_embed, emb_size))
                 self.BLIPcap.visual_encoder.patch_embed.img_size = (img_size, img_size)
-                print("222")
+                # print("222")
 
                 image = Resize(size=(img_size, img_size), antialias=True)(raw_images).to(self.device)
                 embs = self.BLIPcap.forward_encoder({"image": image})[:, :-1, :]
-                print("333")
+                # print("333")
 
                 embs = embs.reshape(batch_size, emb_size, emb_size, -1)
                 p_enc = p_enc_2d(embs)
@@ -96,7 +96,7 @@ class MaskBLIP(torch.nn.Module):
                     clusterings.append(result_np)
                     del result, result_np
                     torch.cuda.empty_cache()
-                print("444")
+                # print("444")
 
                 del embs, image, p_enc, kmeans
                 torch.cuda.empty_cache()
@@ -107,7 +107,7 @@ class MaskBLIP(torch.nn.Module):
                 aligned = align_clusterings([clusterings[j][i] for j in range(len(clusterings))])
                 prob_map = create_probability_map(aligned)
                 prob_maps.append(prob_map)
-            print("555")
+            # print("555")
 
             prob_maps = torch.stack(prob_maps)
             final_clusters = torch.argmax(self.crf(prob_maps), dim=-1)
@@ -117,12 +117,12 @@ class MaskBLIP(torch.nn.Module):
 
         if clean:
             final_clusters = clean_clusters(final_clusters)
-            print("666")
+            # print("666")
 
 
         if self.captioning:
             captions_list = self.generate_captions(raw_images, final_clusters)
-            print("777")
+            # print("777")
 
             return final_clusters, captions_list
         else:

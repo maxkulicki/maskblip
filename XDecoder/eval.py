@@ -15,7 +15,7 @@ from mpi4py import MPI
 import numpy as np
 
 import torch
-from detectron2.data import MetadataCatalog
+# from detectron2.data import MetadataCatalog
 from detectron2.utils.logger import log_every_n_seconds
 
 from utils.arguments import load_opt_command
@@ -40,6 +40,7 @@ def main(args=None):
         opt['user_dir'] = absolute_user_dir
     opt = init_distributed(opt)
 
+    print("---- 1\n\n\n")
     # build model
     model = BaseModel(opt, build_model(opt)).from_pretrained(opt['WEIGHT']).eval().cuda()
 
@@ -47,7 +48,8 @@ def main(args=None):
     dataloaders = build_eval_dataloader(opt)
     # evaluation dataset
     dataset_names = opt['DATASETS']['TEST']
-
+    print("DATASET NAMES", dataset_names)
+    exit()
     # init metadata
     scores = {}
     summary = {}

@@ -140,37 +140,37 @@ if __name__ == "__main__":
     bad_mIoU_captions = {}
 
     for i, path in enumerate(tqdm(data)):
-        print(path)
-        image = Image.open(f"../datasets/VOCdevkit/VOC2012/JPEGImages/{path}")
-        mask_path = f"../datasets/VOCdevkit/VOC2012/SegmentationClass/{path}".replace(".jpg", ".png")
+        # print(path)
+        image = Image.open(f"../datasets/VOC2012/JPEGImages/{path}")
+        mask_path = f"../datasets/VOC2012/SegmentationClass/{path}".replace(".jpg", ".png")
         mask = preprocess_VOC_mask(mask_path).to(device)
         #gt classes
         noun_phrases = [classes[i] for i in mask.unique()]
-        print("Ground truth classes: {}".format(noun_phrases))
+        # print("Ground truth classes: {}".format(noun_phrases))
         output, _ = segment_image(xdecoder_model, image, noun_phrases, plot=False)
         output = output.to(device)
         transform = PILToTensor()
         mIoU = compute_best_mean_IoU(mask, output)
         mIoU_list.append(mIoU.item())
-        print("mIoU: {}".format(mIoU.item()))
+        # print("mIoU: {}".format(mIoU.item()))
 
-        if mIoU < 1:
+        if mIoU < 0.4:
             output = output.squeeze().cpu().numpy()
             mask = mask.squeeze().cpu().numpy()
             classes_detected = [noun_phrases[i] for i in np.unique(output)]
             fig = plot_segmentation(image, output, noun_phrases, classes_detected, gt=mask, mIoU=mIoU.item())
-            fig.savefig("bad_results_xdecoder/{}.png".format(i))
-        if i > 20:
-            break
+            fig.savefig("bad_results_xdecoder_gt/{}.png".format(i))
+        # if i > 20:
+        #     break
 
     print("Average mIoU: {}".format(sum(mIoU_list) / len(mIoU_list)))
     num_bins = 20
 
-    plt.hist(mIoU_list, bins=num_bins, edgecolor='black')
-    plt.xlabel('mIoU')
-    plt.ylabel('Count')
-    plt.show()
-    plt.savefig("mIoU_hist.png")
-
-    with open("sample.json", "w") as outfile:
-        json.dump(bad_mIoU_captions, outfile)
+    # plt.hist(mIoU_list, bins=num_bins, edgecolor='black')
+    # plt.xlabel('mIoU')
+    # plt.ylabel('Count')
+    # plt.show()
+    # plt.savefig("mIoU_hist.png")
+    #
+    # with open("sample.json", "w") as outfile:
+    #     json.dump(bad_mIoU_captions, outfile)

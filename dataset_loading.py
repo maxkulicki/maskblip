@@ -194,11 +194,13 @@ class VOCWithPaths(VOCSegmentation):
 class CityscapesWithPaths(Cityscapes):
     def __init__(self, root, split='train', mode='fine', target_type='semantic', transform=None, target_transform=None):
         super(CityscapesWithPaths, self).__init__(root, split, mode, target_type, transform=transform, target_transform=target_transform)
-
+        self.img_folder = root
     def __getitem__(self, index):
-        img, target = super(CityscapesWithPaths, self).__getitem__(index)
+        img, gt_mask = super(CityscapesWithPaths, self).__getitem__(index)
+        targets = torch.unique(torch.round(gt_mask * 255))
+        img_size = img.shape[1:]
         path = self.images[index]
-        return img, target, path
+        return img, gt_mask, targets, path, img_size
 
 class CocoDetectionWithPaths(CocoDetection):
     def __init__(self, root, annFile, transform=None):
@@ -251,7 +253,7 @@ def load_dataset(dataset_name, batch_size=1, device='cuda'):
         dataset = VOCWithPaths('../datasets/', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
         #dataset = torchvision.datasets.VOCSegmentation('../datasets', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
     elif dataset_name == 'cityscapes':
-        dataset = CityscapesWithPaths('../datasets/cityscapes', split='train', mode='fine', target_type='semantic', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
+        dataset = CityscapesWithPaths('/media/deepstorage01/datasets_external/cityscapes/cityscapes_original', split='val', mode='fine', target_type='semantic', transform=transforms.ToTensor(), target_transform=transforms.ToTensor())
     elif dataset_name == 'coco':
         dataset = CocoDetectionWithPaths('../datasets/coco/val2017',
                                  '../datasets/coco/annotations/instances_val2017.json',

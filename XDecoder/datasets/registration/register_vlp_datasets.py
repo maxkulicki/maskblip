@@ -97,6 +97,7 @@ def register_pretrain(
     # the name is "coco_2017_train/val_caption_only"
     semantic_name = name
     arrow_root = os.path.join(arrow_root, 'pretrain_arrows_code224')
+    print("ARROW ROOT", arrow_root)
     if os.path.exists(arrow_root):
         pretrain_arrows = load_pretrain_arrows(arrow_root, arrow_paths)
         DatasetCatalog.register(
