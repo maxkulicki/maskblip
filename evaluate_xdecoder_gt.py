@@ -1,9 +1,9 @@
 import torch
-import wandb
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
-from torchvision.transforms import Compose, ToTensor, Normalize, PILToTensor
+from torchvision.transforms import Compose, ToTensor, Normalize, PILToTensor, Resize
 from xdecoder_semseg import load_xdecoder_model, segment_image, plot_segmentation
 from nlp import get_noun_chunks, get_nouns, load_spacy
 from PIL import Image
@@ -104,34 +104,27 @@ def compute_best_mean_IoU(ground_truth, prediction):
 
 
 if __name__ == "__main__":
-    # torch.manual_seed(0)
-    # np.random.seed(0)
-
     batch_size = 1
     plot = True
-    wandb_track = False
     use_nouns_only = True
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     spacy_model = load_spacy()
     xdecoder_model = load_xdecoder_model(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
+    t = []
+    t.extend([Resize((512), interpolation=Image.BICUBIC), PILToTensor()])
+    # t.extend([PILToTensor()])
 
-    if wandb_track:
-        run = wandb.init(
-            # Set the project where this run will be logged
-            project="maskblip",
-            group="multiscale",
-            # Track hyperparameters and run metadata
-            config={
-                "batch_size": batch_size,
-            })
-    else:
-        run = wandb.init(mode = "disabled")
+    transform = Compose(t)
 
-    #open json file
-    with open('maskblip_results_train.json') as f:
-        data = json.load(f)
+    image_names = []
+
+    with open("VOCdevkit/VOC2012/ImageSets/Segmentation/val.txt", 'r') as file:
+        for line in file:
+            image_name = line.strip()  # Remove leading/trailing whitespaces
+            image_names.append(image_name + ".png")
+    print(len(image_names))
 
     with open('pascal_classes.txt', 'r') as f:
         classes = f.read().splitlines()
@@ -139,38 +132,37 @@ if __name__ == "__main__":
     mIoU_list = []
     bad_mIoU_captions = {}
 
-    for i, path in enumerate(tqdm(data)):
-        # print(path)
-        image = Image.open(f"../datasets/VOC2012/JPEGImages/{path}")
-        mask_path = f"../datasets/VOC2012/SegmentationClass/{path}".replace(".jpg", ".png")
+    for i, path in enumerate(tqdm(image_names)):
+        # xdecoder_model = load_xdecoder_model(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        print(path)
+        image_ori = Image.open(f"VOCdevkit/VOC2012/JPEGImages/{path}".replace(".png", ".jpg"))
+        image = image_ori
+        image = transform(image_ori)
+        # image =  Normalize(mean=(0.48145466, 0.4578275, 0.40821073), std=(0.26862954, 0.26130258, 0.27577711))(image.float())
+        mask_path = f"VOCdevkit/VOC2012/SegmentationClass/{path}"
         mask = preprocess_VOC_mask(mask_path).to(device)
-        #gt classes
-        noun_phrases = [classes[i] for i in mask.unique()]
+        # gt classes
+        noun_phrases = classes
+        # noun_phrases = [classes[i] for i in mask.unique()]
         # print("Ground truth classes: {}".format(noun_phrases))
-        output, _ = segment_image(xdecoder_model, image, noun_phrases, plot=False)
+        output, _ = segment_image(xdecoder_model, image, noun_phrases, input_tensor=False, plot=False)
         output = output.to(device)
-        transform = PILToTensor()
-        mIoU = compute_best_mean_IoU(mask, output)
-        mIoU_list.append(mIoU.item())
-        # print("mIoU: {}".format(mIoU.item()))
+        resized_mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=output.shape, mode='nearest')
 
-        if mIoU < 0.4:
+        mIoU = compute_best_mean_IoU(resized_mask, output)
+
+        mIoU_list.append(mIoU.item())
+        print("mIoU: {}".format(mIoU.item()))
+        print(torch.unique(mask))
+        print([classes[i] for i in torch.unique(mask)])
+        if mIoU < 0:
             output = output.squeeze().cpu().numpy()
             mask = mask.squeeze().cpu().numpy()
             classes_detected = [noun_phrases[i] for i in np.unique(output)]
-            fig = plot_segmentation(image, output, noun_phrases, classes_detected, gt=mask, mIoU=mIoU.item())
-            fig.savefig("bad_results_xdecoder_gt/{}.png".format(i))
-        # if i > 20:
+            fig = plot_segmentation(image_ori, output, classes_detected, classes, gt=mask, mIoU=mIoU.item())
+            fig.savefig("bad_results/{}.png".format(i))
+        # if i > 10:
         #     break
 
     print("Average mIoU: {}".format(sum(mIoU_list) / len(mIoU_list)))
     num_bins = 20
-
-    # plt.hist(mIoU_list, bins=num_bins, edgecolor='black')
-    # plt.xlabel('mIoU')
-    # plt.ylabel('Count')
-    # plt.show()
-    # plt.savefig("mIoU_hist.png")
-    #
-    # with open("sample.json", "w") as outfile:
-    #     json.dump(bad_mIoU_captions, outfile)
